@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
 import { auth } from './firebase';
 import { GoogleAuth } from './components/GoogleAuth';
-// import { HomePage } from './components/HomePage';
-// import { Routes, Route } from 'react-router-dom';
-import HistoryPage from './components/HistoryPage';
+import { HomePage } from './components/HomePage';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -38,12 +36,7 @@ function App() {
     return <GoogleAuth onAuthSuccess={handleAuthSuccess} />;
   }
 
-  return (
-    <Routes>
-      {/* <Route path="/" element={<HomePage user={user} />} />
-      <Route path="/history" element={<HistoryPage user={user} />} /> */}
-    </Routes>
-  );
+  return <HomePage user={user} />;
 }
 
 export default App;

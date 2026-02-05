@@ -4,14 +4,30 @@ import { auth, db } from '../firebase';
 import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Star, Download, Share2, Clock, AlertTriangle, Code, XCircle } from 'lucide-react';
+import { Star, Share2, Clock, AlertTriangle, Code, XCircle } from 'lucide-react';
 
 interface HomePageProps { user: User; }
+
+interface Issue {
+  type: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  category: string;
+  message: string;
+  line?: number;
+  column?: number;
+  code?: string;
+  suggestion?: string;
+  fixedCode?: string;
+  confidence: number;
+  impact: string;
+  effort: string;
+  references?: string[];
+}
 
 interface AppAnalysis {
   language: string;
   overallScore: number;
-  issues: any[];
+  issues: Issue[];
   summary: {
     totalIssues: number;
     criticalIssues: number;
@@ -38,17 +54,17 @@ interface AppAnalysis {
   recommendations: string[];
   codeSmells: number;
   technicalDebt: string;
-  repository?: any;
+  repository?: Record<string, unknown>;
+  timestamp?: string;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ user }) => {
   const [code, setCode] = useState('');
-  const [analysis, setAnalysis] = useState<any>(null);
+  const [analysis, setAnalysis] = useState<AppAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisHistory, setAnalysisHistory] = useState<any[]>([]);
+  const [analysisHistory, setAnalysisHistory] = useState<AppAnalysis[]>([]);
   const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [analysisMode, setAnalysisMode] = useState<'code' | 'github'>('code');
-  const [emailSending, setEmailSending] = useState(false);
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
 
   // Language detection helper
@@ -109,9 +125,10 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
         setCurrentAnalysisId(data.analysisId);
       }
 
-    } catch (error: any) {
-      console.error('GitHub analysis failed:', error);
-      alert(error.message || 'Failed to analyze GitHub repository');
+    } catch (error: unknown) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error('GitHub analysis failed:', err);
+      alert(err.message || 'Failed to analyze GitHub repository');
     } finally {
       setIsAnalyzing(false);
     }
@@ -162,9 +179,10 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
       // IMPORTANT: Set analyzing to false to show results
       setIsAnalyzing(false);
 
-    } catch (error: any) {
-      console.error('AI analysis failed:', error);
-      alert(`Analysis failed: ${error.message || 'Unable to analyze code. Please check if OpenAI API key is configured in functions/.env file.'}`);
+    } catch (error: unknown) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error('AI analysis failed:', err);
+      alert(`Analysis failed: ${err.message || 'Unable to analyze code. Please check if OpenAI API key is configured in functions/.env file.'}`);
       setAnalysis(null);
       setIsAnalyzing(false);
     }
@@ -179,11 +197,11 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
       orderBy('createdAt', 'desc')
     );
     const unsub = onSnapshot(q, (snap) => {
-      const items: AppAnalysis[] = [] as any;
+      const items: AppAnalysis[] = [];
       snap.docs.forEach((d) => {
-        const data: any = d.data();
+        const data = d.data() as Record<string, unknown>;
         // Backend saves analysis under 'analysis' field, not 'result'
-        if (data?.analysis) items.push(data.analysis);
+        if (data?.analysis) items.push(data.analysis as AppAnalysis);
       });
       setAnalysisHistory(items);
     });
@@ -198,60 +216,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
     }
   };
 
-  const exportResults = () => {
-    if (analysis) {
-      const results = {
-        timestamp: new Date().toISOString(),
-        user: user.displayName || user.email,
-        analysis
-      };
-      const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `code-review-${Date.now()}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
-  };
-
-  const shareResults = async () => {
-    if (analysis && navigator.share) {
-      try {
-        await navigator.share({
-          title: 'Code Review Results',
-          text: `Code review completed with score: ${analysis.overallScore}%`,
-          url: window.location.href
-        });
-      } catch (error) {
-        console.log('Share failed:', error);
-      }
-    }
-  };
-
-  const emailReport = async () => {
-    if (!analysis || !user?.email) return;
-    setEmailSending(true);
-    try {
-      const functionsUrl = process.env.NODE_ENV === 'production'
-        ? 'https://us-central1-project-70cbf.cloudfunctions.net/sendAnalysisReport'
-        : '/api/sendAnalysisReport';
-      const res = await fetch(functionsUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: user.email,
-          name: user.displayName || user.email,
-          subject: 'Your Code Analysis Results',
-          content: JSON.stringify(analysis, null, 2),
-        }),
-      });
-      await res.json();
-    } catch {}
-    setEmailSending(false);
-  };
+  // Removed unused export/share/email functions
 
   const handleRateIssue = async (index: number, rating: 1 | -1) => {
     try {
@@ -261,9 +226,11 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
         index,
         rating,
         analysisTimestamp: analysis?.timestamp || new Date().toISOString(),
-        createdAt: serverTimestamp(),
+        feedbackCreatedAt: serverTimestamp(),
       });
-    } catch {}
+    } catch (error) {
+      console.error('Failed to rate issue:', error);
+    }
   };
 
   const handleFlagIssue = async (index: number) => {
@@ -273,9 +240,11 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
         email: user.email,
         index,
         analysisTimestamp: analysis?.timestamp || new Date().toISOString(),
-        createdAt: serverTimestamp(),
+        flagCreatedAt: serverTimestamp(),
       });
-    } catch {}
+    } catch (error) {
+      console.error('Failed to flag issue:', error);
+    }
   };
 
   return (
