@@ -132,6 +132,12 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
       setUploadedFiles(processedFiles);
       setCode(combinedCode.trim());
       setUploadProgress(100);
+
+      // Warn if combined code is getting large (approaching 60KB backend limit)
+      const sizeKb = (combinedCode.length / 1024).toFixed(1);
+      if (combinedCode.length > 50 * 1024) {
+        console.warn(`⚠️ Combined code size is ${sizeKb}KB (approaching 60KB backend limit). Consider analyzing fewer files.`);
+      }
       
       // Reset upload state
       setTimeout(() => {
@@ -246,7 +252,7 @@ function processUserData(data) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-white">Code Input</h2>
         <div className="flex space-x-1">
-          {['paste', 'upload', 'folder', 'github'].map(method => (
+          {(['paste', 'upload', 'folder', 'github'] as const).map(method => (
             <button
               key={method}
               onClick={() => setInputMethod(method)}
@@ -375,7 +381,7 @@ function processUserData(data) {
             <p className="text-xs text-gray-500 mb-4">Processes up to 20 files (max 1MB each) for optimal performance</p>
             <input
               type="file"
-              {...({ webkitdirectory: "" } as any)}
+              {...{ webkitdirectory: "true", mozdirectory: "true" } as React.InputHTMLAttributes<HTMLInputElement>}
               multiple
               onChange={handleFolderUpload}
               className="hidden"

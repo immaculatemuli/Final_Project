@@ -80,22 +80,66 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
     setIsAnalyzing(true);
 
     try {
-      const functionsUrl = process.env.NODE_ENV === 'production'
-        ? 'https://us-central1-project-70cbf.cloudfunctions.net/analyzeGithubRepo'
-        : '/api/analyzeGithubRepo';
-
-      const resp = await fetch(functionsUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoUrl, uid: user.uid })
-      });
-
-      if (!resp.ok) {
-        const errorData = await resp.json();
-        throw new Error(errorData.error || 'GitHub analysis failed');
+      // Validate URL
+      const trimmedUrl = repoUrl.trim();
+      if (!trimmedUrl.startsWith('http')) {
+        throw new Error('Invalid repository URL. Must start with http:// or https://');
       }
 
-      const data = await resp.json();
+      // Use production cloud function URL in production, otherwise prefer local emulator
+      const prodUrl = 'https://us-central1-project-70cbf.cloudfunctions.net/analyzeGithubRepo';
+      const devProxyUrl = '/api/analyzeGithubRepo';
+      const emulatorHttp127 = 'http://127.0.0.1:5001/project-70cbf/us-central1/analyzeGithubRepo';
+      const emulatorHttpLocal = 'http://localhost:5001/project-70cbf/us-central1/analyzeGithubRepo';
+      const emulatorHttps127 = 'https://127.0.0.1:5001/project-70cbf/us-central1/analyzeGithubRepo';
+
+      // Try the proxy/emulator first in development for better local DX
+      const tryUrls = process.env.NODE_ENV === 'production'
+        ? [prodUrl]
+        : [devProxyUrl, emulatorHttp127, emulatorHttpLocal, emulatorHttps127, prodUrl];
+
+      let resp: Response | null = null;
+      let lastError: unknown = null;
+      const payload = { repoUrl: trimmedUrl, uid: user.uid };
+      console.debug('analyzeGithubRepo will try URLs:', tryUrls);
+
+      for (const url of tryUrls) {
+        try {
+          resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          // If we get a network-level failure resp may still be undefined
+          if (!resp) continue;
+
+          // If endpoint exists but returned non-2xx, surface server message
+          if (!resp.ok) {
+            const errorData = await resp.json().catch(() => ({}));
+            const msg = (errorData && (errorData.error || errorData.message)) || `Request to ${url} failed with status ${resp.status}`;
+            throw new Error(msg);
+          }
+
+          // success
+          break;
+        } catch (err) {
+          lastError = err;
+          console.warn(`Request to ${url} failed:`, err);
+          // try the next URL in tryUrls
+          resp = null;
+          continue;
+        }
+      }
+
+      if (!resp) {
+        const err = lastError instanceof Error ? lastError : new Error(String(lastError));
+        throw new Error(`Failed to contact analysis service: ${err.message}. Run the functions emulator or check network/proxy settings.`);
+      }
+
+      const data = await resp.json().catch((e) => {
+        throw new Error(`Failed to parse JSON from analysis service at ${resp!.url}: ${String(e)}`);
+      });
       const server = data.analysis || data;
 
       const newAnalysis: AppAnalysis = {
@@ -141,14 +185,67 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
     try {
       const language = detectLanguage(codeContent);
 
+      // Check payload size limit (60KB)
+      const maxSize = 60 * 1024; // 60KB
+      if (codeContent.length > maxSize) {
+        const sizeKb = (codeContent.length / 1024).toFixed(1);
+        const maxKb = (maxSize / 1024).toFixed(0);
+        console.warn(`Code truncated from ${sizeKb}KB to ${maxKb}KB to respect backend limit`);
+        alert(`⚠️ Code exceeds maximum size (${sizeKb}KB > ${maxKb}KB). Analysis will use first ${maxKb}KB of code only.\n\nTip: Upload fewer files or smaller files for better results.`);
+      }
 
-      const resp = await fetch("http://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode" , {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', "x-user-id": user.uid, },
-        body: JSON.stringify({ code: codeContent, language, uid: user.uid })
+      // Use production cloud function URL in production, otherwise prefer local emulator
+      const prodUrl = 'https://us-central1-project-70cbf.cloudfunctions.net/analyzeCode';
+      const devProxyUrl = '/api/analyzeCode';
+      const emulatorHttp127 = 'http://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode';
+      const emulatorHttpLocal = 'http://localhost:5001/project-70cbf/us-central1/analyzeCode';
+      const emulatorHttps127 = 'https://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode';
+
+      // Try the proxy/emulator first in development for better local DX
+      const tryUrls = process.env.NODE_ENV === 'production'
+        ? [prodUrl]
+        : [devProxyUrl, emulatorHttp127, emulatorHttpLocal, emulatorHttps127, prodUrl];
+
+      let resp: Response | null = null;
+      let lastError: unknown = null;
+      const codeToAnalyze = codeContent.length > maxSize ? codeContent.substring(0, maxSize) : codeContent;
+      const payload = { code: codeToAnalyze, language, uid: user.uid };
+      console.debug('analyzeCode will try URLs:', tryUrls);
+
+      for (const url of tryUrls) {
+        try {
+          resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-user-id': user.uid },
+            body: JSON.stringify(payload),
+          });
+
+          if (!resp) continue;
+
+          if (!resp.ok) {
+            const errorData = await resp.json().catch(() => ({}));
+            const msg = (errorData && (errorData.error || errorData.message)) || `Request to ${url} failed with status ${resp.status}`;
+            throw new Error(msg);
+          }
+
+          // success
+          break;
+        } catch (err) {
+          lastError = err;
+          console.warn(`Request to ${url} failed:`, err);
+          resp = null;
+          continue;
+        }
+      }
+
+      if (!resp) {
+        const err = lastError instanceof Error ? lastError : new Error(String(lastError));
+        throw new Error(`Failed to contact analysis service: ${err.message}. Run the functions emulator or check network/proxy settings.`);
+      }
+
+      const data = await resp.json().catch((e) => {
+        throw new Error(`Failed to parse JSON from analysis service at ${resp!.url}: ${String(e)}`);
       });
-      if (!resp.ok) throw new Error('Remote analysis failed');
-      const data = await resp.json();
       const server = data.analysis || data;
       const newAnalysis: AppAnalysis = {
         language: server.language || language,
@@ -176,14 +273,12 @@ export const HomePage: React.FC<HomePageProps> = ({ user }) => {
         setCurrentAnalysisId(data.analysisId);
       }
 
-      // IMPORTANT: Set analyzing to false to show results
-      setIsAnalyzing(false);
-
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error('AI analysis failed:', err);
       alert(`Analysis failed: ${err.message || 'Unable to analyze code. Please check if OpenAI API key is configured in functions/.env file.'}`);
       setAnalysis(null);
+    } finally {
       setIsAnalyzing(false);
     }
   };
