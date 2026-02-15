@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import {
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Info,
-  Shield,
-  Zap,
-  Code,
+import { 
+  AlertTriangle, 
+  CheckCircle, 
+  XCircle, 
+  Info, 
+  Shield, 
+  Zap, 
+  Code, 
   FileText,
   TrendingUp,
   Clock,
@@ -72,7 +72,6 @@ interface Analysis {
 interface ReviewPanelProps {
   analysis: Analysis | null;
   isAnalyzing: boolean;
-  isFixing?: boolean;
   onAutoFix: () => void;
   sessionId: string;
   onRateIssue?: (index: number, rating: 1 | -1) => void;
@@ -81,9 +80,7 @@ interface ReviewPanelProps {
   analysisId?: string | null;
 }
 
-const ReviewPanel: React.FC<ReviewPanelProps> = ({ analysis, isAnalyzing, isFixing = false, onAutoFix, onRateIssue, onFlagIssue, currentUserEmail, analysisId }) => {
-  // ... (lines 84-282 omitted) ...
-
+const ReviewPanel: React.FC<ReviewPanelProps> = ({ analysis, isAnalyzing, onRateIssue, onFlagIssue, currentUserEmail, analysisId }) => {
   const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [expandedIssues, setExpandedIssues] = useState<Set<number>>(new Set());
@@ -96,7 +93,6 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ analysis, isAnalyzing, isFixi
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Open modal - show AI-generated content
   const openSendModal = () => {
@@ -244,7 +240,6 @@ ${analysis.technicalDebt}
 
   const categories = ['all', ...new Set(analysis.issues.map(issue => issue.category))];
   const severities = ['all', 'critical', 'high', 'medium', 'low'];
-  const hasAutoFix = analysis.issues.some(issue => issue.fixedCode && issue.fixedCode.trim().length > 0);
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg">
@@ -272,40 +267,11 @@ ${analysis.technicalDebt}
               </span>
             </p>
           </div>
-          <div className="text-right space-y-2">
-            <div>
-              <div className={`text-4xl font-bold ${getScoreColor(analysis.overallScore)}`}>
-                {analysis.overallScore}%
-              </div>
-              <div className="text-sm text-gray-500 dark:text-gray-400">Overall Score</div>
+          <div className="text-right">
+            <div className={`text-4xl font-bold ${getScoreColor(analysis.overallScore)}`}>
+              {analysis.overallScore}%
             </div>
-
-            <div className="flex gap-2 justify-end">
-              {analysis.issues.length > 0 && (
-                <button
-                  onClick={onAutoFix}
-                  disabled={isFixing}
-                  className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white shadow-lg transform transition-all ${isFixing ? 'bg-gray-400 cursor-wait' :
-                      hasAutoFix
-                        ? 'bg-green-600 hover:bg-green-700 hover:scale-105'
-                        : 'bg-blue-600 hover:bg-blue-700 hover:scale-105'
-                    }`}
-                  title={hasAutoFix ? "Apply suggested fixes" : "Attempt to fix issues automatically"}
-                >
-                  {isFixing ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      Fixing...
-                    </>
-                  ) : (
-                    <>
-                      {hasAutoFix ? <CheckCircle className="w-4 h-4 mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
-                      {hasAutoFix ? "Fix Issues" : "Auto Fix"}
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
+            <div className="text-sm text-gray-500 dark:text-gray-400">Overall Score</div>
           </div>
         </div>
       </div>
@@ -482,8 +448,8 @@ ${analysis.technicalDebt}
           <div className="text-center py-8">
             <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-              {selectedSeverity === 'all' && selectedCategory === 'all'
-                ? 'No Issues Found!'
+              {selectedSeverity === 'all' && selectedCategory === 'all' 
+                ? 'No Issues Found!' 
                 : 'No Issues Match Your Filters'
               }
             </h3>
@@ -519,7 +485,7 @@ ${analysis.technicalDebt}
                           <span>{issue.category}</span>
                         </span>
                       </div>
-
+                      
                       {issue.line && (
                         <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
                           Line {issue.line}{issue.column ? `:${issue.column}` : ''}
@@ -536,9 +502,9 @@ ${analysis.technicalDebt}
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-400">
-                          <span>Confidence: {issue.confidence}%</span>
-                          <span>Impact: {issue.impact}</span>
-                          <span>Effort: {issue.effort}</span>
+                        <span>Confidence: {issue.confidence}%</span>
+                        <span>Impact: {issue.impact}</span>
+                        <span>Effort: {issue.effort}</span>
                         </div>
                         <div className="flex items-center space-x-2">
                           <button
@@ -566,7 +532,7 @@ ${analysis.technicalDebt}
                       </div>
                     </div>
                   </div>
-
+                  
                   <button
                     onClick={() => toggleIssueExpansion(index)}
                     className="flex-shrink-0 p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
@@ -671,7 +637,7 @@ ${analysis.technicalDebt}
               </li>
             ))}
           </ul>
-          <div className="mt-4 flex gap-2">
+          <div className="mt-4">
             <button
               onClick={async () => {
                 const lines = [
@@ -680,30 +646,7 @@ ${analysis.technicalDebt}
                   `Total Issues: ${analysis.summary.totalIssues}`,
                   '',
                   'Recommendations:',
-                  ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`)
-                ].join('\n');
-
-                try {
-                  await navigator.clipboard.writeText(lines);
-                  alert('Report copied to clipboard!');
-                } catch (e) {
-                  console.error('Copy failed', e);
-                  alert('Failed to copy report.');
-                }
-              }}
-              className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-            >
-              Copy Report
-            </button>
-            <button
-              onClick={async () => {
-                const lines = [
-                  `Language: ${analysis.language}`,
-                  `Score: ${analysis.overallScore}%`,
-                  `Total Issues: ${analysis.summary.totalIssues}`,
-                  '',
-                  'Recommendations:',
-                  ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`)
+                  ...analysis.recommendations.map((r, i) => `${i+1}. ${r}`)
                 ].join('\n');
                 const blob = new Blob([lines], { type: 'text/plain' });
                 const url = URL.createObjectURL(blob);
@@ -715,7 +658,7 @@ ${analysis.technicalDebt}
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
               }}
-              className="px-3 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-800 transition-colors"
+              className="px-3 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-800"
             >
               Download text summary
             </button>
@@ -755,7 +698,6 @@ ${analysis.technicalDebt}
                 setSending(true);
                 setSendError(null);
                 setSendSuccess(null);
-                setPreviewUrl(null);
                 try {
                   // Use the local function endpoint
                   const functionsUrl = process.env.NODE_ENV === 'production'
@@ -780,11 +722,6 @@ ${analysis.technicalDebt}
                   if (!response.ok) {
                     const msg = data && data.error ? data.error : 'Failed to send email';
                     throw new Error(msg);
-                  }
-
-                  // Capture preview URL if provided (Ethereal Email test service)
-                  if (data.previewUrl) {
-                    setPreviewUrl(data.previewUrl);
                   }
 
                   setSendSuccess('AI-generated recommendations sent successfully!');
@@ -832,18 +769,7 @@ ${analysis.technicalDebt}
               )}
               {sendSuccess && (
                 <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-600 dark:text-green-400 text-sm p-3 rounded">
-                  <p className="mb-2">{sendSuccess}</p>
-                  {previewUrl && (
-                    <a
-                      href={previewUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center text-blue-600 dark:text-blue-400 hover:underline font-medium"
-                    >
-                      <ExternalLink className="w-4 h-4 mr-1" />
-                      View Email Preview
-                    </a>
-                  )}
+                  {sendSuccess}
                 </div>
               )}
               <button

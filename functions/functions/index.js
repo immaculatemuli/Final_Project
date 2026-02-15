@@ -1,5 +1,5 @@
-const { setGlobalOptions } = require("firebase-functions");
-const { onRequest } = require("firebase-functions/https");
+const {setGlobalOptions} = require("firebase-functions");
+const {onRequest} = require("firebase-functions/https");
 const logger = require("firebase-functions/logger");
 const functions = require('firebase-functions');
 const nodemailer = require('nodemailer');
@@ -130,9 +130,9 @@ exports.sendAnalysisReport = onRequest(withCors(async (req, res) => {
 
           <div class="recommendations-section">
             <div class="rec-title">Key Recommendations</div>
-            ${content.split('\n').filter(line => line.trim().length > 0).map(rec =>
-    `<div class="recommendation"><p>${rec}</p></div>`
-  ).join('')}
+            ${content.split('\n').filter(line => line.trim().length > 0).map(rec => 
+              `<div class="recommendation"><p>${rec}</p></div>`
+            ).join('')}
           </div>
 
           <div class="divider"></div>
@@ -295,8 +295,7 @@ exports.analyzeCode = onRequest(withCors(async (req, res) => {
     const language = detectLanguage(code);
 
     // Call OpenAI with structured prompt for JSON response
-    const prompt = `You are an expert code reviewer and fixer. The code may be incomplete (truncated, missing braces, unfinished blocks) or contain syntax errors.
-Analyze the following ${language} code and provide a comprehensive review in strict JSON format.
+    const prompt = `You are an expert code reviewer. Analyze the following ${language} code and provide a comprehensive review in strict JSON format.
 
 Code to analyze:
 \`\`\`${language}
@@ -324,15 +323,13 @@ Return a JSON object with this exact structure:
   },
   "issues": [
     {
-    "severity": "critical|high|medium|low",
-    "category": "Security|Performance|Best Practices|Style|Documentation",
-    "message": "Clear description of the issue, including if the code looks incomplete or truncated",
-    "line": <line number or 0>,
-    "suggestion": "How to fix it",
-    "code": "The smallest relevant code snippet that shows the problem (optional)",
-    "fixedCode": "A corrected version of the snippet or the full corrected code if appropriate (optional)"
-  }
-],
+      "severity": "critical|high|medium|low",
+      "category": "Security|Performance|Best Practices|Style|Documentation",
+      "message": "Clear description of the issue",
+      "line": <line number or 0>,
+      "suggestion": "How to fix it"
+    }
+  ],
   "recommendations": [
     "Actionable recommendation 1",
     "Actionable recommendation 2",
@@ -341,10 +338,7 @@ Return a JSON object with this exact structure:
   "technicalDebt": "Estimate of time/effort to address all issues"
 }
 
-Additional, very important instructions:
-- If the code appears incomplete or abruptly cut off, you MUST include at least one issue with severity "critical" whose message clearly states that the code is incomplete or truncated, and provide a best-effort completed version of the code in "fixedCode".
-- If there are obvious syntax errors, you MUST include issues that describe them and provide a syntactically valid "fixedCode" snippet or full corrected code.
-- Always return VALID JSON only (no markdown, no backticks, no comments).`;
+Be thorough but concise. Provide actionable insights.`;
 
     // Call OpenAI API (separate from JSON parsing for better error handling)
     logger.info('Calling OpenAI API...');
@@ -414,9 +408,9 @@ Additional, very important instructions:
         message: issue.message || 'Issue detected',
         line: issue.line || 0,
         column: 1,
-        code: issue.code || '',
+        code: '',
         suggestion: issue.suggestion || 'Review this code section',
-        fixedCode: issue.fixedCode || '',
+        fixedCode: '',
         confidence: 85,
         impact: issue.severity === 'critical' ? 'high' : issue.severity === 'high' ? 'medium' : 'low',
         effort: issue.severity === 'critical' ? 'high' : 'medium'
@@ -457,8 +451,6 @@ Additional, very important instructions:
       const db = admin.firestore();
       const analysisDoc = await db.collection('analyses').add({
         codeHash,
-        // Store a truncated version of the analyzed code so the UI can show history
-        codeSnippet: code.length > 4000 ? code.substring(0, 4000) : code,
         language,
         filename: filename || 'untitled',
         uid: uid || null,
@@ -691,8 +683,6 @@ Return a JSON object with this exact structure:
         analyzedFile: firstFile.name,
         totalFilesFound: codeFiles.length
       },
-      // Expose the analyzed source code so the frontend can populate the editor
-      sourceCode: codeContent,
       issues: (analysisData.issues || []).map((issue, idx) => ({
         id: `issue-${idx}`,
         type: issue.category?.toLowerCase() || 'general',
@@ -752,8 +742,6 @@ Return a JSON object with this exact structure:
         language,
         uid: uid || null,
         analysis,
-        // Store a truncated version of the analyzed code to support history/restore
-        codeSnippet: codeContent.length > 4000 ? codeContent.substring(0, 4000) : codeContent,
         createdAt: FieldValue.serverTimestamp(),
         model: 'gpt-3.5-turbo'
       });
@@ -784,77 +772,6 @@ Return a JSON object with this exact structure:
       error: 'Failed to analyze GitHub repository',
       details: error.message
     });
-  }
-}));
-
-// Fix Code Endpoint
-exports.fixCode = onRequest(withCors(async (req, res) => {
-  logger.info('=== fixCode function called ===');
-  if (req.method !== 'POST') {
-    return res.status(405).send('Method Not Allowed');
-  }
-
-  const { code, issues, language, uid } = req.body || {};
-
-  if (!code) {
-    return res.status(400).json({ error: 'Missing code parameter' });
-  }
-
-  // Rate limiting
-  const clientId = uid || req.ip || 'anonymous';
-  if (!checkRateLimit(clientId + '_fix', 5, 60000)) {
-    return res.status(429).json({ error: 'Rate limit exceeded for fix requests.' });
-  }
-
-  try {
-    const apiKey = process.env.OPENAI_API_KEY || (functions.config().openai && functions.config().openai.key);
-    if (!apiKey) {
-      return res.status(500).json({ error: 'AI service not configured.' });
-    }
-
-    const openai = new OpenAI({ apiKey });
-
-    // Construct a focused prompt
-    const issueDescriptions = issues && issues.length > 0
-      ? issues.map(i => `- [${i.severity}] ${i.message} (Line ${i.line})`).join('\n')
-      : "General code improvements and syntax cleanup.";
-
-    const prompt = `You are an expert software engineer.
-Your task is to FIX the following ${language || 'source'} code.
-Address these specific reported issues:
-${issueDescriptions}
-
-Instructions:
-1. Return ONLY the fixed code.
-2. Do NOT wrap in markdown backticks.
-3. Do NOT add comments explaining what you did unless necessary for the code itself.
-4. Maintain the original coding style.
-5. Fix ALL syntax errors and incomplete code blocks.
-
-Code to fix:
-${code}`;
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o', // Use a smart model for fixing if available, otherwise gpt-3.5-turbo
-      messages: [
-        { role: 'system', content: 'You are a code fixing engine. Output strictly raw code only. No markdown formatting.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.2, // Low temperature for precision
-    });
-
-    let fixedCode = completion.choices[0].message.content.trim();
-
-    // Cleanup potential markdown if the model ignores instructions
-    if (fixedCode.startsWith('```')) {
-      fixedCode = fixedCode.replace(/^```[a-z]*\n/i, '').replace(/```$/, '');
-    }
-
-    return res.status(200).json({ success: true, fixedCode });
-
-  } catch (error) {
-    logger.error('Fix code error:', error);
-    return res.status(500).json({ error: 'Failed to fix code', details: error.message });
   }
 }));
 
@@ -944,7 +861,7 @@ exports.sendRecommendationEmailV2 = onRequest(withCors(async (req, res) => {
 
     // Compose email
     const mailSubject = subject || 'AI Code Review - Recommendations';
-
+    
     // Build score color based on score value
     const getScoreColor = (score) => {
       if (score >= 80) return '#10b981';

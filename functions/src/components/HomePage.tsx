@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, signOut } from 'firebase/auth';
 import { auth, db } from '../firebase';
-import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Star, Share2, Clock, AlertTriangle, Code, XCircle, Copy } from 'lucide-react';
+import { Star, Share2, Clock, AlertTriangle, Code, XCircle } from 'lucide-react';
 
 interface HomePageProps { user: User; }
 
@@ -56,45 +56,16 @@ interface AppAnalysis {
   technicalDebt: string;
   repository?: Record<string, unknown>;
   timestamp?: string;
-  // Optional snippet of the analyzed code for history/restore
-  codeSnippet?: string;
 }
 
-interface HomePageProps {
-  user: User;
-  onNavigate?: (view: 'home' | 'history') => void;
-  restoredAnalysis?: AppAnalysis | null;
-  clearRestoredAnalysis?: () => void;
-}
-
-// ... existing interfaces ...
-
-export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAnalysis, clearRestoredAnalysis }) => {
+export const HomePage: React.FC<HomePageProps> = ({ user }) => {
   const [code, setCode] = useState('');
   const [analysis, setAnalysis] = useState<AppAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isFixing, setIsFixing] = useState(false);
   const [analysisHistory, setAnalysisHistory] = useState<AppAnalysis[]>([]);
   const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [analysisMode, setAnalysisMode] = useState<'code' | 'github'>('code');
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
-  const [collabSessionId, setCollabSessionId] = useState<string | null>(null);
-  const [joinSessionInput, setJoinSessionInput] = useState('');
-  const isRemoteUpdate = useRef(false);
-
-  // Handle restored analysis from history
-  useEffect(() => {
-    if (restoredAnalysis) {
-      setAnalysis(restoredAnalysis);
-      if (restoredAnalysis.codeSnippet) {
-        setCode(restoredAnalysis.codeSnippet);
-      }
-      // Clear the restored analysis prop so it doesn't re-trigger
-      if (clearRestoredAnalysis) {
-        clearRestoredAnalysis();
-      }
-    }
-  }, [restoredAnalysis, clearRestoredAnalysis]);
 
   // Language detection helper
   const detectLanguage = (codeContent: string) => {
@@ -171,10 +142,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       });
       const server = data.analysis || data;
 
-      const codeSnippetFromServer: string | undefined =
-        (server.sourceCode as string | undefined) ||
-        (server.repository && (server.repository.analyzedFileContent as string | undefined));
-
       const newAnalysis: AppAnalysis = {
         language: server.language || 'unknown',
         overallScore: server.overallScore ?? 75,
@@ -186,38 +153,16 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         metrics: server.metrics || {
           complexity: 1, maintainability: 75, readability: 75, performance: 75, security: 75,
           documentation: 25, cyclomaticComplexity: 1, cognitiveComplexity: 1,
-          linesOfCode: codeSnippetFromServer ? codeSnippetFromServer.split('\n').length : 0,
-          duplicateLines: 0,
-          testCoverage: 0
+          linesOfCode: 0, duplicateLines: 0, testCoverage: 0
         },
         recommendations: server.recommendations || [],
         codeSmells: server.codeSmells || 0,
         technicalDebt: server.technicalDebt || 'n/a',
-        repository: server.repository || null,
-        codeSnippet: codeSnippetFromServer
+        repository: server.repository || null
       };
 
       setAnalysis(newAnalysis);
       setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
-
-      // Populate the editor with the imported GitHub file so it can be edited directly
-      if (codeSnippetFromServer) {
-        setCode(codeSnippetFromServer);
-      }
-
-      // If in a collaborative session, sync GitHub-imported code and analysis
-      if (collabSessionId) {
-        const sessionRef = doc(db, 'collabSessions', collabSessionId);
-        await setDoc(
-          sessionRef,
-          {
-            code: codeSnippetFromServer || '',
-            analysis: newAnalysis,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
-      }
 
       // Store the analysisId from backend
       if (data.analysisId) {
@@ -323,20 +268,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       setAnalysis(newAnalysis);
       setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]); // Keep last 10 analyses
 
-      // If in a collaborative session, sync latest code + analysis to Firestore
-      if (collabSessionId) {
-        const sessionRef = doc(db, 'collabSessions', collabSessionId);
-        await setDoc(
-          sessionRef,
-          {
-            code: codeContent,
-            analysis: newAnalysis,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
-      }
-
       // Store the analysisId from backend
       if (data.analysisId) {
         setCurrentAnalysisId(data.analysisId);
@@ -365,14 +296,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       snap.docs.forEach((d) => {
         const data = d.data() as Record<string, unknown>;
         // Backend saves analysis under 'analysis' field, not 'result'
-        if (data?.analysis) {
-          const baseAnalysis = data.analysis as AppAnalysis;
-          const codeSnippet = (data as any).codeSnippet as string | undefined;
-          items.push({
-            ...baseAnalysis,
-            codeSnippet,
-          });
-        }
+        if (data?.analysis) items.push(data.analysis as AppAnalysis);
       });
       setAnalysisHistory(items);
     });
@@ -418,224 +342,43 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     }
   };
 
-  // Apply `fixedCode` from issues to the editor
-  const handleAutoFix = async () => {
-    if (!analysis) {
-      alert('Please analyze some code first.');
-      return;
-    }
-
-    // 1. Try to find an existing precise fix in the analysis results
-    const criticalFix = analysis.issues.find(
-      (issue) => issue.severity === 'critical' && issue.fixedCode && issue.fixedCode.trim().length > 0
-    );
-
-    const anyFix = analysis.issues.find(
-      (issue) => issue.fixedCode && issue.fixedCode.trim().length > 0
-    );
-
-    const issueWithFix = criticalFix || anyFix;
-
-    if (issueWithFix && issueWithFix.fixedCode) {
-      if (issueWithFix.fixedCode.length > 50) {
-        if (window.confirm('Apply fix from analysis results?')) {
-          setCode(issueWithFix.fixedCode);
-          return;
-        }
-      }
-      // If it's a snippet, we might want to fall through to the AI fix or alert user.
-      // For now, let's just fall through to the enhanced AI fix if user didn't confirm or it's short.
-    }
-
-    // 2. Fallback: Call the dedicated fixCode endpoint
-    try {
-      setIsFixing(true);
-
-      const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-        ? 'http://127.0.0.1:5001/project-70cbf/us-central1'
-        : '/api';
-
-      const response = await fetch(`${API_URL}/fixCode`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          code,
-          issues: analysis.issues,
-          language: analysis.language,
-          uid: user?.uid
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Fix failed: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      if (data.fixedCode) {
-        setCode(data.fixedCode);
-        alert('Code fixed! Please review the changes.');
-      } else {
-        alert('Could not generate a fix automatically.');
-      }
-    } catch (error) {
-      console.error('Auto fix error:', error);
-      alert('Failed to fix code. Please try again.');
-    } finally {
-      setIsFixing(false);
-    }
-  };
-
-  // Start a new collaborative session
-  const handleStartCollabSession = async () => {
-    const id = Math.random().toString(36).slice(2, 10);
-    const sessionRef = doc(db, 'collabSessions', id);
-    await setDoc(sessionRef, {
-      code,
-      analysis: analysis || null,
-      ownerUid: user.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    setCollabSessionId(id);
-    setJoinSessionInput(id);
-  };
-
-  // Join an existing collaborative session by ID
-  const handleJoinSession = (id: string) => {
-    if (!id) return;
-    setCollabSessionId(id.trim());
-  };
-
-  // Sync incoming collaborative session updates (code + analysis) to local state
-  useEffect(() => {
-    if (!collabSessionId) return;
-    const sessionRef = doc(db, 'collabSessions', collabSessionId);
-    const unsub = onSnapshot(sessionRef, (snap) => {
-      if (!snap.exists()) return;
-      const data = snap.data() as any;
-      if (typeof data.code === 'string') {
-        isRemoteUpdate.current = true;
-        setCode(data.code);
-      }
-      if (data.analysis) {
-        setAnalysis(data.analysis as AppAnalysis);
-      }
-    });
-    return () => unsub();
-  }, [collabSessionId]);
-
-  // Push local code changes to the collaborative session document
-  useEffect(() => {
-    if (!collabSessionId) return;
-    if (isRemoteUpdate.current) {
-      isRemoteUpdate.current = false;
-      return;
-    }
-    const sync = async () => {
-      const sessionRef = doc(db, 'collabSessions', collabSessionId);
-      await setDoc(
-        sessionRef,
-        {
-          code,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
-    };
-    if (code) {
-      void sync();
-    }
-  }, [code, collabSessionId]);
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col">
-      <header className="bg-black/20 backdrop-blur-md border-b border-white/10 py-4 px-8 flex items-center justify-between">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900 flex flex-col">
+      <header className="bg-black/30 backdrop-blur-md border-b border-white/10 py-4 px-8 flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-            <Star className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Intellicode</span>
+          <Star className="w-8 h-8 text-blue-400" />
+          <span className="text-2xl font-bold text-white">AI Code Review</span>
         </div>
         <button
           onClick={handleSignOut}
-          className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-2 rounded-lg font-medium transition-all transform hover:scale-105 shadow-md"
+          className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition"
         >
           Sign Out
         </button>
       </header>
       <main className="flex-1 flex flex-col md:flex-row gap-8 p-8">
-        <section className="flex-1 bg-slate-800/50 backdrop-blur border border-white/10 rounded-2xl shadow-lg p-6 flex flex-col">
-          <div className="mb-4 flex flex-col space-y-3">
-            <div className="flex space-x-2">
-              <button
-                onClick={() => setAnalysisMode('code')}
-                className={`px-4 py-2 rounded-lg font-medium transition ${analysisMode === 'code'
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
-                  : 'bg-slate-700/50 text-gray-300 hover:bg-slate-700 border border-slate-600/50'
-                  }`}
-              >
-                Code Snippet
-              </button>
-              <button
-                onClick={() => setAnalysisMode('github')}
-                className={`px-4 py-2 rounded-lg font-medium transition ${analysisMode === 'github'
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
-                  : 'bg-slate-700/50 text-gray-300 hover:bg-slate-700 border border-slate-600/50'
-                  }`}
-              >
-                GitHub Repository
-              </button>
-            </div>
-
-            {/* Collaborative session controls */}
-            <div className="mt-1 bg-slate-900/40 border border-slate-700/70 rounded-lg p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-              <div className="text-xs text-gray-300">
-                {collabSessionId ? (
-                  <>
-                    Collaborative session ID:&nbsp;
-                    <span className="font-mono bg-slate-800 px-2 py-0.5 rounded border border-slate-600 select-all">
-                      {collabSessionId}
-                    </span>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(collabSessionId);
-                        alert('Session ID copied!');
-                      }}
-                      className="ml-2 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-white"
-                      title="Copy Session ID"
-                    >
-                      <Copy className="w-3 h-3" />
-                    </button>
-                  </>
-                ) : (
-                  'Start or join a collaborative review session to share code and analysis in real time.'
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleStartCollabSession}
-                  className="px-3 py-1 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
-                >
-                  Start Session
-                </button>
-                <input
-                  type="text"
-                  value={joinSessionInput}
-                  onChange={(e) => setJoinSessionInput(e.target.value)}
-                  placeholder="Session ID"
-                  className="px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded-md text-gray-100 placeholder-gray-500"
-                />
-                <button
-                  onClick={() => handleJoinSession(joinSessionInput)}
-                  className="px-3 py-1 text-xs rounded-md bg-slate-700 hover:bg-slate-600 text-white font-medium"
-                >
-                  Join
-                </button>
-              </div>
-            </div>
+        <section className="flex-1 bg-white/10 backdrop-blur-md rounded-xl shadow p-6 flex flex-col">
+          <div className="mb-4 flex space-x-2">
+            <button
+              onClick={() => setAnalysisMode('code')}
+              className={`px-4 py-2 rounded-lg font-medium transition ${
+                analysisMode === 'code'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              Code Snippet
+            </button>
+            <button
+              onClick={() => setAnalysisMode('github')}
+              className={`px-4 py-2 rounded-lg font-medium transition ${
+                analysisMode === 'github'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              GitHub Repository
+            </button>
           </div>
 
           {analysisMode === 'code' ? (
@@ -657,13 +400,13 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                   value={githubRepoUrl}
                   onChange={(e) => setGithubRepoUrl(e.target.value)}
                   placeholder="https://github.com/owner/repository"
-                  className="px-4 py-3 bg-slate-700/50 text-white border border-white/10 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                  className="px-4 py-3 bg-gray-800 text-white border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   disabled={isAnalyzing}
                 />
                 <button
                   onClick={() => analyzeGithubRepo(githubRepoUrl)}
                   disabled={isAnalyzing || !githubRepoUrl}
-                  className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-3 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium shadow-md transform hover:scale-105"
+                  className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium"
                 >
                   {isAnalyzing ? 'Analyzing Repository...' : 'Analyze Repository'}
                 </button>
@@ -675,38 +418,24 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           )}
           {analysisHistory.length > 0 && (
             <div className="mt-8">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-200 flex items-center">
-                  <Clock className="w-5 h-5 mr-2" />
-                  Recent Analyses
-                </h3>
-                {onNavigate && (
-                  <button
-                    onClick={() => onNavigate('history')}
-                    className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
-                  >
-                    View Full History
-                  </button>
-                )}
-              </div>
+              <h3 className="text-lg font-semibold text-gray-200 mb-4 flex items-center">
+                <Clock className="w-5 h-5 mr-2" />
+                Recent Analyses
+              </h3>
               <div className="space-y-3 max-h-80 overflow-y-auto">
                 {analysisHistory.slice(0, 10).map((a, i) => (
                   <div
                     key={i}
-                    className="bg-slate-800/30 rounded-lg p-4 hover:bg-slate-800/60 transition cursor-pointer border border-white/10 hover:border-blue-500/50"
-                    onClick={() => {
-                      setAnalysis(a);
-                      if (a.codeSnippet) {
-                        setCode(a.codeSnippet);
-                      }
-                    }}
+                    className="bg-gray-900/70 rounded-lg p-4 hover:bg-gray-900/90 transition cursor-pointer border border-gray-700 hover:border-blue-500"
+                    onClick={() => setAnalysis(a)}
                   >
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex items-center space-x-2">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${a.overallScore >= 80 ? 'bg-green-600 text-white' :
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          a.overallScore >= 80 ? 'bg-green-600 text-white' :
                           a.overallScore >= 60 ? 'bg-yellow-600 text-white' :
-                            'bg-red-600 text-white'
-                          }`}>
+                          'bg-red-600 text-white'
+                        }`}>
                           {a.overallScore}%
                         </span>
                         <span className="text-gray-300 font-medium">{a.language}</span>
@@ -741,32 +470,24 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                         {a.summary.criticalIssues} critical issues
                       </div>
                     )}
-
-                    {a.codeSnippet && (
-                      <div className="mt-2 text-xs text-gray-400 font-mono line-clamp-2">
-                        {a.codeSnippet}
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
             </div>
           )}
         </section>
-        <section className="flex-1 bg-slate-800/50 backdrop-blur border border-white/10 rounded-2xl shadow-lg p-6">
-          <div className="lg:col-span-1">
-            <ReviewPanel
-              analysis={analysis}
-              isAnalyzing={isAnalyzing}
-              isFixing={isFixing}
-              onAutoFix={handleAutoFix}
-              sessionId={collabSessionId || ''}
-              onRateIssue={handleRateIssue}
-              onFlagIssue={handleFlagIssue}
-              currentUserEmail={user.email || undefined}
-              analysisId={analysis?.analysisId}
-            />
-          </div>
+        <section className="flex-1 bg-white/10 backdrop-blur-md rounded-xl shadow p-6">
+          <h2 className="text-xl font-semibold text-white mb-4">Review Analysis</h2>
+          <ReviewPanel
+            analysis={analysis}
+            isAnalyzing={isAnalyzing}
+            onAutoFix={() => {}}
+            sessionId={`session-${Date.now()}`}
+            onRateIssue={handleRateIssue}
+            onFlagIssue={handleFlagIssue}
+            currentUserEmail={user.email || undefined}
+            analysisId={currentAnalysisId}
+          />
         </section>
       </main>
     </div>

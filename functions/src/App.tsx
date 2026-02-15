@@ -3,15 +3,10 @@ import { User } from 'firebase/auth';
 import { auth } from './firebase';
 import { GoogleAuth } from './components/GoogleAuth';
 import { HomePage } from './components/HomePage';
-import { LandingPage } from './components/LandingPage';
-import HistoryPage from './components/HistoryPage';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showAuth, setShowAuth] = useState(false);
-  const [currentView, setCurrentView] = useState<'home' | 'history'>('home');
-  const [restoredAnalysis, setRestoredAnalysis] = useState<any>(null);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((user) => {
@@ -26,10 +21,6 @@ function App() {
     setUser(user);
   };
 
-  const handleGetStarted = () => {
-    setShowAuth(true);
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
@@ -42,33 +33,10 @@ function App() {
   }
 
   if (!user) {
-    if (!showAuth) {
-      return <LandingPage onGetStarted={handleGetStarted} />;
-    }
     return <GoogleAuth onAuthSuccess={handleAuthSuccess} />;
   }
 
-  if (currentView === 'history') {
-    return (
-      <HistoryPage
-        user={user}
-        onNavigate={(view) => setCurrentView(view)}
-        onRestore={(analysis) => {
-          setRestoredAnalysis(analysis);
-          setCurrentView('home');
-        }}
-      />
-    );
-  }
-
-  return (
-    <HomePage
-      user={user}
-      onNavigate={(view) => setCurrentView(view)}
-      restoredAnalysis={restoredAnalysis}
-      clearRestoredAnalysis={() => setRestoredAnalysis(null)}
-    />
-  );
+  return <HomePage user={user} />;
 }
 
 export default App;

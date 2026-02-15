@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { signInWithPopup, signOut, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
-import { LogOut, User as UserIcon } from 'lucide-react';
-import { FcGoogle } from 'react-icons/fc';
+import { Chrome, LogOut, User as UserIcon } from 'lucide-react';
 
 interface GoogleAuthProps {
   onAuthSuccess: (user: User) => void;
@@ -66,14 +65,14 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      <div className="bg-slate-800/50 backdrop-blur-md border border-white/10 rounded-2xl p-8 w-full max-w-md shadow-2xl hover:shadow-blue-500/10 transition-shadow">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
+      <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 w-full max-w-md shadow-2xl">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <UserIcon className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent mb-2">Intellicode</h1>
-          <p className="text-gray-400">Sign in to start analyzing your code</p>
+          <h1 className="text-3xl font-bold text-white mb-2">AI Code Review</h1>
+          <p className="text-gray-300">Sign in to start analyzing your code</p>
         </div>
 
         {error && (
@@ -90,7 +89,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
                 value={displayName}
                 onChange={e => setDisplayName(e.target.value)}
                 placeholder="Display name"
-                className="w-full p-3 bg-slate-800/50 border border-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                className="w-full p-3 bg-gray-900/50 border border-white/20 rounded-lg text-white focus:outline-none"
               />
             )}
             <input
@@ -99,7 +98,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
               onChange={e => setEmail(e.target.value)}
               placeholder="Email"
               required
-              className="w-full p-3 bg-slate-800/50 border border-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
+              className="w-full p-3 bg-gray-900/50 border border-white/20 rounded-lg text-white focus:outline-none"
             />
             <input
               type="password"
@@ -107,12 +106,12 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
               onChange={e => setPassword(e.target.value)}
               placeholder="Password"
               required
-              className="w-full p-3 bg-slate-800/50 border border-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
+              className="w-full p-3 bg-gray-900/50 border border-white/20 rounded-lg text-white focus:outline-none"
             />
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-blue-500/50 transform hover:scale-105"
+              className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
               {loading ? (mode === 'signup' ? 'Creating account...' : 'Signing in...') : (mode === 'signup' ? 'Create account' : 'Sign in')}
             </button>
@@ -122,17 +121,17 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
             <button
               onClick={handleGoogleSignIn}
               disabled={loading}
-              className="flex items-center justify-center space-x-2 px-4 py-3 bg-white text-gray-900 rounded-lg hover:bg-gray-100 disabled:opacity-50 transition-all border border-white/20 font-medium transform hover:scale-105 shadow-md"
+              className="flex items-center space-x-2 px-4 py-2 bg-white text-gray-900 rounded-lg hover:bg-gray-100 disabled:opacity-50"
             >
-              <FcGoogle className="w-5 h-5" />
+              <Chrome className="w-4 h-4 text-red-500" />
               <span>Continue with Google</span>
             </button>
           </div>
-          <div className="text-center text-sm text-gray-400">
+          <div className="text-center text-sm text-gray-300">
             {mode === 'signin' ? (
-              <button onClick={() => setMode('signup')} className="text-blue-400 hover:text-blue-300 transition">Create an account</button>
+              <button onClick={() => setMode('signup')} className="text-blue-300 hover:underline">Create an account</button>
             ) : (
-              <button onClick={() => setMode('signin')} className="text-blue-400 hover:text-blue-300 transition">Have an account? Sign in</button>
+              <button onClick={() => setMode('signin')} className="text-blue-300 hover:underline">Have an account? Sign in</button>
             )}
           </div>
         </div>

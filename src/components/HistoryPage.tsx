@@ -31,6 +31,7 @@ interface AnalysisDoc {
     };
     recommendations: string[];
     technicalDebt: string;
+    codeSnippet?: string;
   };
   createdAt?: unknown;
 }
@@ -39,7 +40,11 @@ const pill = (text: string, color: string) => (
   <span className={`px-2 py-0.5 rounded-full text-xs ${color}`}>{text}</span>
 );
 
-const HistoryPage: React.FC<{ user: User }> = ({ user }) => {
+const HistoryPage: React.FC<{
+  user: User;
+  onNavigate: (view: 'home' | 'history') => void;
+  onRestore: (analysis: any) => void;
+}> = ({ user, onNavigate, onRestore }) => {
   const [items, setItems] = useState<AnalysisDoc[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -53,14 +58,22 @@ const HistoryPage: React.FC<{ user: User }> = ({ user }) => {
       unsubscribe = onSnapshot(qry, (snap) => {
         const docs: AnalysisDoc[] = [];
         snap.forEach(d => {
-          const data = d.data() as { result?: AnalysisDoc['result']; createdAt?: unknown };
-          if (data && data.result) {
-            docs.push({ id: d.id, result: data.result, createdAt: (data as { createdAt?: unknown }).createdAt });
+          const data = d.data() as { result?: AnalysisDoc['result']; createdAt?: unknown; analysis?: AnalysisDoc['result'] };
+          // Handle both 'result' and 'analysis' fields based on backend structure
+          const result = data.analysis || data.result;
+          const codeSnippet = (data as any).codeSnippet;
+          if (result) {
+            // merge codeSnippet if available at top level
+            if (codeSnippet && !result.codeSnippet) {
+              (result as any).codeSnippet = codeSnippet;
+            }
+            docs.push({ id: d.id, result: result, createdAt: (data as { createdAt?: unknown }).createdAt });
           }
         });
         setItems(docs);
         setLoading(false);
-      }, () => {
+      }, (err) => {
+        console.warn("History fetch error", err);
         // Fallback without orderBy (avoids composite index requirement)
         if (useOrder) {
           subscribe(false);
@@ -79,41 +92,74 @@ const HistoryPage: React.FC<{ user: User }> = ({ user }) => {
       <div className="container mx-auto px-4 py-8">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-white text-2xl font-bold">Analysis History</h1>
-          <a href="/" className="text-sm text-blue-300 hover:underline">Back to Home</a>
+          <button
+            onClick={() => onNavigate('home')}
+            className="text-sm text-blue-300 hover:text-blue-200 hover:underline bg-transparent border-none cursor-pointer"
+          >
+            Back to Home
+          </button>
         </div>
 
         {loading ? (
-          <div className="text-gray-300">Loading…</div>
+          <div className="text-gray-300 flex justify-center py-10">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+          </div>
         ) : items.length === 0 ? (
-          <div className="text-gray-300">No analyses yet.</div>
+          <div className="text-gray-300 text-center py-10 bg-white/5 rounded-xl">No analyses yet. Start by analyzing some code!</div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {items.map((doc) => {
               const a = doc.result;
               return (
-                <div key={doc.id} className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-white font-semibold">
-                      {a.language.toUpperCase()} · Score {a.score}% · LOC {a.metrics.linesOfCode}
+                <div key={doc.id} className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-5 hover:bg-white/15 transition-all">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between mb-3 gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${a.score >= 80 ? 'bg-green-600 text-white' :
+                        a.score >= 60 ? 'bg-yellow-600 text-white' :
+                          'bg-red-600 text-white'
+                        }`}>
+                        {a.score}%
+                      </span>
+                      <span className="text-white font-semibold text-lg">{a.language.toUpperCase()}</span>
+                      <span className="text-gray-400 text-sm">· LOC {a.metrics.linesOfCode}</span>
+                      <span className="text-gray-500 text-xs hidden md:inline">· {doc.id}</span>
                     </div>
-                    <div className="text-sm text-gray-300">
-                      {pill(`${a.summary.totalIssues} issues`, 'bg-gray-800 text-gray-200')}
-                      <span className="mx-1"></span>
-                      {pill(`${a.summary.criticalIssues} critical`, 'bg-red-600/30 text-red-300')}
-                      <span className="mx-1"></span>
-                      {pill(`${a.summary.highIssues} high`, 'bg-orange-600/30 text-orange-300')}
-                      <span className="mx-1"></span>
-                      {pill(`${a.summary.mediumIssues} med`, 'bg-yellow-600/30 text-yellow-200')}
-                      <span className="mx-1"></span>
-                      {pill(`${a.summary.lowIssues} low`, 'bg-blue-600/30 text-blue-300')}
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onRestore(a)}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors shadow-sm"
+                      >
+                        Restore & View
+                      </button>
                     </div>
                   </div>
+
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {pill(`${a.summary.totalIssues} issues`, 'bg-gray-800 text-gray-200')}
+                    {a.summary.criticalIssues > 0 && pill(`${a.summary.criticalIssues} critical`, 'bg-red-900/50 text-red-200 border border-red-700/50')}
+                    {a.summary.highIssues > 0 && pill(`${a.summary.highIssues} high`, 'bg-orange-900/50 text-orange-200 border border-orange-700/50')}
+                    {a.summary.mediumIssues > 0 && pill(`${a.summary.mediumIssues} med`, 'bg-yellow-900/50 text-yellow-200 border border-yellow-700/50')}
+                    {a.summary.lowIssues > 0 && pill(`${a.summary.lowIssues} low`, 'bg-blue-900/50 text-blue-200 border border-blue-700/50')}
+                  </div>
+
+                  {(a as any).codeSnippet && (
+                    <div className="mb-3 bg-black/30 rounded p-2">
+                      <code className="text-xs text-gray-400 font-mono line-clamp-2">
+                        {(a as any).codeSnippet}
+                      </code>
+                    </div>
+                  )}
+
                   {a.recommendations && a.recommendations.length > 0 && (
-                    <ul className="list-disc list-inside text-gray-200 text-sm">
-                      {a.recommendations.slice(0, 3).map((r, i) => (
-                        <li key={i}>{r}</li>
-                      ))}
-                    </ul>
+                    <div className="mt-2 pt-2 border-t border-white/10">
+                      <p className="text-xs text-gray-400 mb-1 font-medium">Top Recommendations:</p>
+                      <ul className="list-disc list-inside text-gray-300 text-sm space-y-1">
+                        {a.recommendations.slice(0, 2).map((r, i) => (
+                          <li key={i} className="line-clamp-1">{r}</li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                 </div>
               );
