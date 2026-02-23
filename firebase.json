@@ -17,7 +17,7 @@
       "port": 5001
     },
     "ui": {
-      "enabled": false
+      "enabled": true
     }
   }
 }

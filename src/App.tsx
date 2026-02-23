@@ -5,12 +5,13 @@ import { GoogleAuth } from './components/GoogleAuth';
 import { HomePage } from './components/HomePage';
 import { LandingPage } from './components/LandingPage';
 import HistoryPage from './components/HistoryPage';
+import { SnippetsPage } from './components/SnippetsPage';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAuth, setShowAuth] = useState(false);
-  const [currentView, setCurrentView] = useState<'home' | 'history'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'history' | 'snippets'>('home');
   const [restoredAnalysis, setRestoredAnalysis] = useState<any>(null);
 
   useEffect(() => {
@@ -52,9 +53,22 @@ function App() {
     return (
       <HistoryPage
         user={user}
-        onNavigate={(view) => setCurrentView(view)}
+        onNavigate={(view) => setCurrentView(view as any)}
         onRestore={(analysis) => {
           setRestoredAnalysis(analysis);
+          setCurrentView('home');
+        }}
+      />
+    );
+  }
+
+  if (currentView === 'snippets') {
+    return (
+      <SnippetsPage
+        user={user}
+        onNavigate={(view) => setCurrentView(view as any)}
+        onRestoreSnippet={(code, analysis) => {
+          setRestoredAnalysis({ ...analysis, codeSnippet: code });
           setCurrentView('home');
         }}
       />
@@ -64,7 +78,7 @@ function App() {
   return (
     <HomePage
       user={user}
-      onNavigate={(view) => setCurrentView(view)}
+      onNavigate={(view) => setCurrentView(view as any)}
       restoredAnalysis={restoredAnalysis}
       clearRestoredAnalysis={() => setRestoredAnalysis(null)}
     />

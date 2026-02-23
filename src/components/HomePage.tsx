@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, signOut } from 'firebase/auth';
 import { auth, db } from '../firebase';
-import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc, limit } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Star, Share2, Clock, AlertTriangle, Code, XCircle, Copy } from 'lucide-react';
+import { Star, Share2, Clock, AlertTriangle, Code, XCircle, Copy, ArrowLeftRight } from 'lucide-react';
+import { DiffViewer } from './DiffViewer';
 
 interface HomePageProps { user: User; }
 
@@ -74,13 +75,18 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const [analysis, setAnalysis] = useState<AppAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
+  const [wasAutoFixed, setWasAutoFixed] = useState(false);
+  const [autoFixMessage, setAutoFixMessage] = useState<string | null>(null);
   const [analysisHistory, setAnalysisHistory] = useState<AppAnalysis[]>([]);
   const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [analysisMode, setAnalysisMode] = useState<'code' | 'github'>('code');
-  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
   const [collabSessionId, setCollabSessionId] = useState<string | null>(null);
   const [joinSessionInput, setJoinSessionInput] = useState('');
+  const [targetLine, setTargetLine] = useState<number | null>(null);
+  const [originalCode, setOriginalCode] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'editor' | 'diff'>('editor');
   const isRemoteUpdate = useRef(false);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
 
   // Handle restored analysis from history
   useEffect(() => {
@@ -249,17 +255,13 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         alert(`⚠️ Code exceeds maximum size (${sizeKb}KB > ${maxKb}KB). Analysis will use first ${maxKb}KB of code only.\n\nTip: Upload fewer files or smaller files for better results.`);
       }
 
-      // Use production cloud function URL in production, otherwise prefer local emulator
+      // Use production cloud function URL in production
       const prodUrl = 'https://us-central1-project-70cbf.cloudfunctions.net/analyzeCode';
-      const devProxyUrl = '/api/analyzeCode';
-      const emulatorHttp127 = 'http://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode';
-      const emulatorHttpLocal = 'http://localhost:5001/project-70cbf/us-central1/analyzeCode';
-      const emulatorHttps127 = 'https://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode';
 
-      // Try the proxy/emulator first in development for better local DX
+      // In development, try the most likely URLs first
       const tryUrls = process.env.NODE_ENV === 'production'
         ? [prodUrl]
-        : [devProxyUrl, emulatorHttp127, emulatorHttpLocal, emulatorHttps127, prodUrl];
+        : ['http://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode', 'http://localhost:5001/project-70cbf/us-central1/analyzeCode', '/api/analyzeCode', prodUrl];
 
       let resp: Response | null = null;
       let lastError: unknown = null;
@@ -323,6 +325,10 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       setAnalysis(newAnalysis);
       setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]); // Keep last 10 analyses
 
+      if (data.analysisId) {
+        setCurrentAnalysisId(data.analysisId);
+      }
+
       // If in a collaborative session, sync latest code + analysis to Firestore
       if (collabSessionId) {
         const sessionRef = doc(db, 'collabSessions', collabSessionId);
@@ -337,10 +343,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         );
       }
 
-      // Store the analysisId from backend
-      if (data.analysisId) {
-        setCurrentAnalysisId(data.analysisId);
-      }
+
 
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -358,7 +361,8 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     const q = query(
       collection(db, 'analyses'),
       where('uid', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      orderBy('createdAt', 'desc'),
+      limit(10)
     );
     const unsub = onSnapshot(q, (snap) => {
       const items: AppAnalysis[] = [];
@@ -418,73 +422,170 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     }
   };
 
-  // Apply `fixedCode` from issues to the editor
+  // Apply AI fix to the editor, then automatically re-analyze the fixed code
   const handleAutoFix = async () => {
     if (!analysis) {
       alert('Please analyze some code first.');
       return;
     }
-
-    // 1. Try to find an existing precise fix in the analysis results
-    const criticalFix = analysis.issues.find(
-      (issue) => issue.severity === 'critical' && issue.fixedCode && issue.fixedCode.trim().length > 0
-    );
-
-    const anyFix = analysis.issues.find(
-      (issue) => issue.fixedCode && issue.fixedCode.trim().length > 0
-    );
-
-    const issueWithFix = criticalFix || anyFix;
-
-    if (issueWithFix && issueWithFix.fixedCode) {
-      if (issueWithFix.fixedCode.length > 50) {
-        if (window.confirm('Apply fix from analysis results?')) {
-          setCode(issueWithFix.fixedCode);
-          return;
-        }
-      }
-      // If it's a snippet, we might want to fall through to the AI fix or alert user.
-      // For now, let's just fall through to the enhanced AI fix if user didn't confirm or it's short.
+    if (!code.trim()) {
+      alert('No code in the editor to fix.');
+      return;
     }
 
-    // 2. Fallback: Call the dedicated fixCode endpoint
     try {
       setIsFixing(true);
+      setAutoFixMessage(null);
+      setWasAutoFixed(false);
+      setOriginalCode(code); // Capture original before fix
 
-      const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-        ? 'http://127.0.0.1:5001/project-70cbf/us-central1'
-        : '/api';
+      // Build the list of URLs to try (same pattern as analyzeCode)
+      const prodUrl = 'https://us-central1-project-70cbf.cloudfunctions.net/fixCode';
+      const devProxyUrl = '/api/fixCode';
+      const emulatorUrl = 'http://127.0.0.1:5001/project-70cbf/us-central1/fixCode';
+      const emulatorLocalUrl = 'http://localhost:5001/project-70cbf/us-central1/fixCode';
 
-      const response = await fetch(`${API_URL}/fixCode`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          code,
-          issues: analysis.issues,
-          language: analysis.language,
-          uid: user?.uid
-        }),
-      });
+      const tryUrls = process.env.NODE_ENV === 'production'
+        ? [prodUrl]
+        : [emulatorUrl, emulatorLocalUrl, devProxyUrl, prodUrl];
 
-      if (!response.ok) {
-        throw new Error(`Fix failed: ${response.statusText}`);
+      let resp: Response | null = null;
+      let lastError: unknown = null;
+      const payload = {
+        code,
+        issues: analysis.issues,
+        language: analysis.language,
+        uid: user?.uid,
+      };
+
+      for (const url of tryUrls) {
+        try {
+          resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            throw new Error((errData && (errData.error || errData.message)) || `HTTP ${resp.status}`);
+          }
+          break;
+        } catch (err) {
+          lastError = err;
+          resp = null;
+        }
       }
 
-      const data = await response.json();
-
-      if (data.fixedCode) {
-        setCode(data.fixedCode);
-        alert('Code fixed! Please review the changes.');
-      } else {
-        alert('Could not generate a fix automatically.');
+      if (!resp) {
+        const msg = lastError instanceof Error ? lastError.message : String(lastError);
+        throw new Error(`Failed to reach fix service: ${msg}`);
       }
+
+      const data = await resp.json();
+
+      if (!data.fixedCode) {
+        throw new Error('The fix service did not return fixed code.');
+      }
+
+      // 1. Update the editor with the fully fixed code
+      const fixedCode = data.fixedCode;
+      setCode(fixedCode);
+      setIsFixing(false);
+      setWasAutoFixed(true);
+      setViewMode('diff'); // Switch to diff view automatically
+
+      // 2. Automatically re-analyze the fixed code
+      setAutoFixMessage('✨ Code fixed! Re-analyzing to verify improvements...');
+      setIsAnalyzing(true);
+
+      try {
+        const language = analysis.language;
+        const analyzeUrls = process.env.NODE_ENV === 'production'
+          ? ['https://us-central1-project-70cbf.cloudfunctions.net/analyzeCode']
+          : [
+            'http://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode',
+            'http://localhost:5001/project-70cbf/us-central1/analyzeCode',
+            '/api/analyzeCode',
+            'https://us-central1-project-70cbf.cloudfunctions.net/analyzeCode'
+          ];
+
+        let analyzeResp: Response | null = null;
+        for (const url of analyzeUrls) {
+          try {
+            analyzeResp = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-user-id': user.uid },
+              body: JSON.stringify({ code: fixedCode, language, uid: user.uid }),
+            });
+            if (!analyzeResp.ok) {
+              const errData = await analyzeResp.json().catch(() => ({}));
+              throw new Error((errData && (errData.error || errData.message)) || `HTTP ${analyzeResp.status}`);
+            }
+            break;
+          } catch (err) {
+            analyzeResp = null;
+          }
+        }
+
+        if (analyzeResp) {
+          const analyzeData = await analyzeResp.json();
+          const server = analyzeData.analysis || analyzeData;
+          const newAnalysis: AppAnalysis = {
+            language: server.language || language,
+            overallScore: server.overallScore ?? 75,
+            issues: server.issues || [],
+            summary: server.summary || {
+              totalIssues: 0, criticalIssues: 0, highIssues: 0, mediumIssues: 0, lowIssues: 0,
+              securityIssues: 0, performanceIssues: 0, qualityIssues: 0
+            },
+            metrics: server.metrics || {
+              complexity: 1, maintainability: 75, readability: 75, performance: 75, security: 75,
+              documentation: 25, cyclomaticComplexity: 1, cognitiveComplexity: 1,
+              linesOfCode: fixedCode.split('\n').length, duplicateLines: 0, testCoverage: 0
+            },
+            recommendations: server.recommendations || [],
+            codeSmells: server.codeSmells || 0,
+            technicalDebt: server.technicalDebt || 'n/a',
+          };
+          setAnalysis(newAnalysis);
+          setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
+
+        }
+
+        setWasAutoFixed(true);
+        setAutoFixMessage('✓ Code auto-fixed and re-analyzed successfully!');
+        setTimeout(() => setAutoFixMessage(null), 5000);
+      } catch (analyzeErr) {
+        console.warn('Re-analysis after fix failed:', analyzeErr);
+        setAutoFixMessage('✓ Code fixed! Click Analyze to see updated results.');
+        setTimeout(() => setAutoFixMessage(null), 6000);
+      } finally {
+        setIsAnalyzing(false);
+      }
+
     } catch (error) {
       console.error('Auto fix error:', error);
-      alert('Failed to fix code. Please try again.');
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Auto Fix failed: ${msg}`);
     } finally {
       setIsFixing(false);
+    }
+  };
+
+  const handleSaveSnippet = async () => {
+    if (!code || !analysis) return;
+    try {
+      await addDoc(collection(db, 'bookmarks'), {
+        uid: user.uid,
+        code,
+        analysis,
+        createdAt: serverTimestamp(),
+      });
+      setAutoFixMessage('⭐ Snippet saved to your library!');
+      setTimeout(() => setAutoFixMessage(null), 3000);
+    } catch (error) {
+      console.error('Failed to save snippet:', error);
+      alert('Failed to save snippet.');
     }
   };
 
@@ -516,42 +617,67 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     const unsub = onSnapshot(sessionRef, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data() as any;
+
+      isRemoteUpdate.current = true;
+
       if (typeof data.code === 'string') {
-        isRemoteUpdate.current = true;
         setCode(data.code);
       }
       if (data.analysis) {
         setAnalysis(data.analysis as AppAnalysis);
       }
+      if (typeof data.originalCode === 'string') {
+        setOriginalCode(data.originalCode);
+      }
+      if (typeof data.viewMode === 'string') {
+        setViewMode(data.viewMode as 'editor' | 'diff');
+      }
+      if (typeof data.wasAutoFixed === 'boolean') {
+        setWasAutoFixed(data.wasAutoFixed);
+      }
+
+      // Reset the flag after state updates have been queued
+      setTimeout(() => {
+        isRemoteUpdate.current = false;
+      }, 100);
     });
     return () => unsub();
   }, [collabSessionId]);
 
-  // Push local code changes to the collaborative session document
+  // Push local state changes to the collaborative session document
   useEffect(() => {
     if (!collabSessionId) return;
-    if (isRemoteUpdate.current) {
-      isRemoteUpdate.current = false;
-      return;
-    }
+    if (isRemoteUpdate.current) return;
+
     const sync = async () => {
       const sessionRef = doc(db, 'collabSessions', collabSessionId);
       await setDoc(
         sessionRef,
         {
           code,
+          originalCode,
+          viewMode,
+          wasAutoFixed,
           updatedAt: serverTimestamp(),
         },
         { merge: true },
       );
     };
-    if (code) {
+
+    // Only sync if there is something to sync
+    if (code !== undefined) {
       void sync();
     }
-  }, [code, collabSessionId]);
+  }, [code, originalCode, viewMode, wasAutoFixed, collabSessionId]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col">
+      {/* Auto-fix success banner */}
+      {autoFixMessage && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl text-white text-sm font-medium flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-green-600 animate-pulse">
+          <span>{autoFixMessage}</span>
+        </div>
+      )}
       <header className="bg-black/20 backdrop-blur-md border-b border-white/10 py-4 px-8 flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
@@ -640,13 +766,41 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
           {analysisMode === 'code' ? (
             <>
-              <h2 className="text-xl font-semibold text-white mb-4">Paste Your Code</h2>
-              <CodeInput
-                onAnalyze={analyzeCode}
-                isAnalyzing={isAnalyzing}
-                code={code}
-                setCode={setCode}
-              />
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-white">
+                  {viewMode === 'editor' ? 'Paste Your Code' : 'Review Transformation'}
+                </h2>
+                {originalCode && wasAutoFixed && (
+                  <div className="flex bg-slate-700/50 rounded-lg p-1 border border-white/10">
+                    <button
+                      onClick={() => setViewMode('editor')}
+                      className={`px-3 py-1 text-xs rounded-md transition-all ${viewMode === 'editor' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      View Editor
+                    </button>
+                    <button
+                      onClick={() => setViewMode('diff')}
+                      className={`px-3 py-1 text-xs rounded-md transition-all ${viewMode === 'diff' ? 'bg-emerald-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      <ArrowLeftRight className="w-3 h-3 inline mr-1" />
+                      View Diff
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {viewMode === 'editor' ? (
+                <CodeInput
+                  onAnalyze={analyzeCode}
+                  isAnalyzing={isAnalyzing}
+                  code={code}
+                  setCode={setCode}
+                  targetLine={targetLine}
+                  onLineNavigated={() => setTargetLine(null)}
+                />
+              ) : (
+                <DiffViewer original={originalCode || ''} modified={code} />
+              )}
             </>
           ) : (
             <>
@@ -760,11 +914,12 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
               isAnalyzing={isAnalyzing}
               isFixing={isFixing}
               onAutoFix={handleAutoFix}
-              sessionId={collabSessionId || ''}
+              sessionId={collabSessionId || currentAnalysisId || ''}
               onRateIssue={handleRateIssue}
               onFlagIssue={handleFlagIssue}
-              currentUserEmail={user.email || undefined}
-              analysisId={analysis?.analysisId}
+              wasAutoFixed={wasAutoFixed}
+              onIssueClick={(line) => setTargetLine(line)}
+              onSaveSnippet={handleSaveSnippet}
             />
           </div>
         </section>

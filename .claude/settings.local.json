@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(cmd /c \"netstat -ano | findstr :5001\")",
+      "Bash(cmd /c \"netstat -ano\")",
+      "Bash(firebase emulators:start:*)"
+    ]
+  }
+}

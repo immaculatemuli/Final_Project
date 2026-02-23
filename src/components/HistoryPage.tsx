@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, limit, startAfter, getDocs, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 
 interface Issue {
   type: string;
@@ -47,6 +47,10 @@ const HistoryPage: React.FC<{
 }> = ({ user, onNavigate, onRestore }) => {
   const [items, setItems] = useState<AnalysisDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const INITIAL_LIMIT = 20;
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
@@ -54,16 +58,17 @@ const HistoryPage: React.FC<{
     const subscribe = (useOrder: boolean) => {
       const baseCol = collection(db, 'analyses');
       const baseWhere = where('uid', '==', user.uid);
-      const qry = useOrder ? query(baseCol, baseWhere, orderBy('createdAt', 'desc')) : query(baseCol, baseWhere);
+      const qry = useOrder
+        ? query(baseCol, baseWhere, orderBy('createdAt', 'desc'), limit(INITIAL_LIMIT))
+        : query(baseCol, baseWhere, limit(INITIAL_LIMIT));
+
       unsubscribe = onSnapshot(qry, (snap) => {
         const docs: AnalysisDoc[] = [];
         snap.forEach(d => {
           const data = d.data() as { result?: AnalysisDoc['result']; createdAt?: unknown; analysis?: AnalysisDoc['result'] };
-          // Handle both 'result' and 'analysis' fields based on backend structure
           const result = data.analysis || data.result;
           const codeSnippet = (data as any).codeSnippet;
           if (result) {
-            // merge codeSnippet if available at top level
             if (codeSnippet && !result.codeSnippet) {
               (result as any).codeSnippet = codeSnippet;
             }
@@ -71,10 +76,11 @@ const HistoryPage: React.FC<{
           }
         });
         setItems(docs);
+        setLastDoc(snap.docs[snap.docs.length - 1] || null);
+        setHasMore(snap.docs.length === INITIAL_LIMIT);
         setLoading(false);
       }, (err) => {
         console.warn("History fetch error", err);
-        // Fallback without orderBy (avoids composite index requirement)
         if (useOrder) {
           subscribe(false);
         } else {
@@ -86,6 +92,39 @@ const HistoryPage: React.FC<{
     subscribe(true);
     return () => { if (unsubscribe) unsubscribe(); };
   }, [user.uid]);
+
+  const loadMore = async () => {
+    if (!lastDoc || loadingMore) return;
+    setLoadingMore(true);
+
+    try {
+      const baseCol = collection(db, 'analyses');
+      const baseWhere = where('uid', '==', user.uid);
+      const qry = query(baseCol, baseWhere, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(INITIAL_LIMIT));
+
+      const snap = await getDocs(qry);
+      const newDocs: AnalysisDoc[] = [];
+      snap.forEach(d => {
+        const data = d.data() as { result?: AnalysisDoc['result']; createdAt?: unknown; analysis?: AnalysisDoc['result'] };
+        const result = data.analysis || data.result;
+        const codeSnippet = (data as any).codeSnippet;
+        if (result) {
+          if (codeSnippet && !result.codeSnippet) {
+            (result as any).codeSnippet = codeSnippet;
+          }
+          newDocs.push({ id: d.id, result: result, createdAt: (data as { createdAt?: unknown }).createdAt });
+        }
+      });
+
+      setItems(prev => [...prev, ...newDocs]);
+      setLastDoc(snap.docs[snap.docs.length - 1] || null);
+      setHasMore(snap.docs.length === INITIAL_LIMIT);
+    } catch (err) {
+      console.error("Load more error", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
@@ -107,7 +146,7 @@ const HistoryPage: React.FC<{
         ) : items.length === 0 ? (
           <div className="text-gray-300 text-center py-10 bg-white/5 rounded-xl">No analyses yet. Start by analyzing some code!</div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-4 pb-10">
             {items.map((doc) => {
               const a = doc.result;
               return (
@@ -164,6 +203,23 @@ const HistoryPage: React.FC<{
                 </div>
               );
             })}
+
+            {hasMore && (
+              <div className="flex justify-center mt-8">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="px-6 py-2 bg-white/10 hover:bg-white/20 text-white font-medium rounded-lg transition-all border border-white/20 disabled:opacity-50"
+                >
+                  {loadingMore ? (
+                    <div className="flex items-center gap-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-white"></div>
+                      Loading...
+                    </div>
+                  ) : 'Load More Results'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

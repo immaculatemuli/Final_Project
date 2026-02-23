@@ -6,6 +6,8 @@ interface CodeInputProps {
   isAnalyzing: boolean;
   code: string;
   setCode: (code: string) => void;
+  targetLine?: number | null;
+  onLineNavigated?: () => void;
 }
 
 interface UploadedFile {
@@ -16,7 +18,8 @@ interface UploadedFile {
 }
 
 export const CodeInput: React.FC<CodeInputProps> = (props) => {
-  const { code, setCode, isAnalyzing, onAnalyze } = props;
+  const { code, setCode, isAnalyzing, onAnalyze, targetLine, onLineNavigated } = props;
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const [inputMethod, setInputMethod] = useState<'paste' | 'upload' | 'folder' | 'github'>('paste');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -41,10 +44,10 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
 
   const processFiles = async (files: File[]) => {
     console.log('Starting optimized file processing...', files.length, 'files');
-    
+
     setIsUploading(true);
     setUploadProgress(0);
-    
+
     // Filter files more efficiently
     const codeFiles = files.filter(file => {
       const fileName = file.name.toLowerCase();
@@ -77,11 +80,11 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
       const batchSize = 5;
       for (let i = 0; i < limitedFiles.length; i += batchSize) {
         const batch = limitedFiles.slice(i, i + batchSize);
-        
+
         const batchPromises = batch.map(file => {
           return new Promise<UploadedFile | null>((resolve) => {
             const reader = new FileReader();
-            
+
             reader.onload = (e) => {
               try {
                 const content = e.target?.result as string;
@@ -101,18 +104,18 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
                 resolve(null);
               }
             };
-            
+
             reader.onerror = () => {
               console.error(`Failed to read file: ${file.name}`);
               resolve(null);
             };
-            
+
             reader.readAsText(file);
           });
         });
 
         const batchResults = await Promise.all(batchPromises);
-        
+
         batchResults.forEach(result => {
           if (result) {
             processedFiles.push(result);
@@ -123,7 +126,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
         // Update progress
         const progress = Math.round(((i + batch.length) / limitedFiles.length) * 100);
         setUploadProgress(progress);
-        
+
         // Small delay to prevent UI blocking
         await new Promise(resolve => setTimeout(resolve, 50));
       }
@@ -138,7 +141,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
       if (combinedCode.length > 50 * 1024) {
         console.warn(`⚠️ Combined code size is ${sizeKb}KB (approaching 60KB backend limit). Consider analyzing fewer files.`);
       }
-      
+
       // Reset upload state
       setTimeout(() => {
         setIsUploading(false);
@@ -166,7 +169,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    
+
     const files = Array.from(e.dataTransfer.files);
     processFiles(files);
   };
@@ -174,11 +177,11 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   const removeFile = (index: number) => {
     const newFiles = uploadedFiles.filter((_, i) => i !== index);
     setUploadedFiles(newFiles);
-    
+
     if (newFiles.length === 0) {
       setCode('');
     } else {
-      const combinedCode = newFiles.map(file => 
+      const combinedCode = newFiles.map(file =>
         `\n\n// ==========================================\n// File: ${file.name}\n// ==========================================\n${file.content}`
       ).join('');
       setCode(combinedCode.trim());
@@ -247,6 +250,44 @@ function processUserData(data) {
   return [];
 }`;
 
+  // Handle line navigation
+  React.useEffect(() => {
+    if (targetLine && textareaRef.current) {
+      const el = textareaRef.current;
+      const lines = code.split('\n');
+      const lineIndex = Math.max(0, targetLine - 1);
+
+      // Calculate scroll position (rough estimate)
+      const lineHeight = 20; // approximate line height in px
+      const targetScroll = lineIndex * lineHeight;
+
+      el.scrollTo({
+        top: targetScroll,
+        behavior: 'smooth'
+      });
+
+      // Brief highlight effect
+      el.focus();
+
+      // Set cursor to the start of that line
+      let charPos = 0;
+      for (let i = 0; i < lineIndex && i < lines.length; i++) {
+        charPos += lines[i].length + 1;
+      }
+
+      const lineLength = lines[lineIndex]?.length || 0;
+      el.setSelectionRange(charPos, charPos + lineLength);
+
+      // Reset target after a delay to allow for multiple clicks on the same line
+      setTimeout(() => {
+        onLineNavigated?.();
+      }, 500);
+    }
+  }, [targetLine, code, onLineNavigated]);
+
+  const lineCount = code.split('\n').length;
+  const lineNumbers = Array.from({ length: Math.max(1, lineCount) }, (_, i) => i + 1).join('\n');
+
   return (
     <div className="bg-gray-800 text-white rounded-lg p-6">
       <div className="flex items-center justify-between mb-4">
@@ -270,12 +311,29 @@ function processUserData(data) {
 
       {inputMethod === 'paste' && (
         <div className="space-y-4">
-          <textarea
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="Paste your code here..."
-            className="w-full h-64 p-4 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          <div className="relative flex bg-gray-900 border border-gray-700 rounded-lg overflow-hidden h-96 group">
+            {/* Extended Line Numbers Gutter */}
+            <div
+              className="w-12 bg-gray-900/50 border-r border-gray-700/50 p-4 pt-4 text-right select-none font-mono text-sm text-gray-500 overflow-hidden"
+              style={{ pointerEvents: 'none' }}
+            >
+              <pre className="m-0 leading-[20px]">{lineNumbers}</pre>
+            </div>
+
+            <textarea
+              ref={textareaRef}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Paste your code here..."
+              className="flex-1 h-full p-4 pt-4 bg-transparent text-white font-mono text-sm resize-none focus:outline-none focus:ring-0 leading-[20px] overflow-y-auto custom-scrollbar whitespace-pre"
+              spellCheck={false}
+              onScroll={(e) => {
+                // Sync gutter scroll
+                const gutter = e.currentTarget.parentElement?.firstChild as HTMLElement;
+                if (gutter) gutter.scrollTop = e.currentTarget.scrollTop;
+              }}
+            />
+          </div>
           <button
             onClick={() => setCode(sampleCode)}
             className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
@@ -287,12 +345,11 @@ function processUserData(data) {
 
       {inputMethod === 'upload' && (
         <div className="space-y-4">
-          <div 
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-              isDragOver 
-                ? 'border-blue-500 bg-blue-500/10' 
-                : 'border-gray-600 hover:border-gray-500'
-            }`}
+          <div
+            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragOver
+              ? 'border-blue-500 bg-blue-500/10'
+              : 'border-gray-600 hover:border-gray-500'
+              }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -366,12 +423,11 @@ function processUserData(data) {
 
       {inputMethod === 'folder' && (
         <div className="space-y-4">
-          <div 
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-              isDragOver 
-                ? 'border-blue-500 bg-blue-500/10' 
-                : 'border-gray-600 hover:border-gray-500'
-            }`}
+          <div
+            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragOver
+              ? 'border-blue-500 bg-blue-500/10'
+              : 'border-gray-600 hover:border-gray-500'
+              }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}

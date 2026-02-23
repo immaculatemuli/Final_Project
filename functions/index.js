@@ -1,9 +1,13 @@
 const { setGlobalOptions } = require("firebase-functions");
 const { onRequest } = require("firebase-functions/https");
 const logger = require("firebase-functions/logger");
-const functions = require('firebase-functions');
-const nodemailer = require('nodemailer');
-require("dotenv").config();
+
+// Move heavy dependencies inside handlers or fetch them on demand
+let nodemailer;
+let OpenAI;
+let crypto;
+let axios;
+let admin;
 
 setGlobalOptions({ maxInstances: 10 });
 
@@ -22,6 +26,8 @@ const withCors = (handler) => async (req, res) => {
 let cachedTransporter = null;
 async function getTransporter() {
   if (cachedTransporter) return cachedTransporter;
+  if (!nodemailer) nodemailer = require('nodemailer');
+
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     cachedTransporter = nodemailer.createTransport({
       service: 'gmail',
@@ -39,19 +45,31 @@ async function getTransporter() {
   return cachedTransporter;
 }
 
-// Initialize OpenAI and required dependencies
-const OpenAI = require('openai');
-const crypto = require('crypto');
-const axios = require('axios');
-
-// Initialize Firebase Admin SDK
-const admin = require('firebase-admin');
-if (!admin.apps.length) {
-  admin.initializeApp();
+// Initializers for heavy libraries
+function getAdmin() {
+  if (!admin) {
+    admin = require('firebase-admin');
+    if (!admin.apps.length) {
+      admin.initializeApp();
+    }
+  }
+  return admin;
 }
 
-// Import FieldValue from firestore module (required for Firebase Admin SDK v12+)
-const { FieldValue } = require('firebase-admin/firestore');
+function getOpenAI() {
+  if (!OpenAI) OpenAI = require('openai');
+  return OpenAI;
+}
+
+function getAxios() {
+  if (!axios) axios = require('axios');
+  return axios;
+}
+
+function getCrypto() {
+  if (!crypto) crypto = require('crypto');
+  return crypto;
+}
 
 exports.sendPasswordReset = onRequest(withCors(async (req, res) => {
   if (req.method !== 'POST') {
@@ -62,6 +80,7 @@ exports.sendPasswordReset = onRequest(withCors(async (req, res) => {
     return res.status(400).json({ error: 'Missing email' });
   }
   try {
+    const admin = getAdmin();
     const link = await admin.auth().generatePasswordResetLink(email);
     // Optionally, you could send this link via email, but for now just return it
     return res.status(200).json({ success: true, link });
@@ -77,7 +96,7 @@ exports.sendAnalysisReport = onRequest(withCors(async (req, res) => {
     return res.status(405).send('Method Not Allowed');
   }
 
-  const { email, subject, content, name } = req.body || {};
+  const { email, subject, content, name, score, language } = req.body || {};
 
   if (!email || !content) {
     return res.status(400).json({ error: 'Missing required fields: email, content' });
@@ -85,73 +104,73 @@ exports.sendAnalysisReport = onRequest(withCors(async (req, res) => {
 
   const safeSubject = subject || 'Code Analysis Results';
   const recipientName = name || 'there';
+  const displayScore = score !== undefined ? `${score}%` : 'A+';
+  const scoreMsg = score !== undefined
+    ? (score >= 80 ? 'Optimized for Performance' : score >= 60 ? 'Good Stability' : 'Needs Optimization')
+    : 'AI Evaluated';
 
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', 'Roboto', Arial, sans-serif; background: #f8fafc; }
-        .container { max-width: 700px; margin: 0 auto; background: #ffffff; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center; color: #ffffff; }
-        .header h1 { margin: 0; font-size: 28px; font-weight: 700; }
-        .header p { margin: 8px 0 0 0; font-size: 15px; opacity: 0.95; }
-        .content { padding: 40px 30px; }
-        .greeting { font-size: 18px; color: #1e293b; margin-bottom: 8px; font-weight: 500; }
-        .intro { font-size: 15px; color: #64748b; margin-bottom: 30px; line-height: 1.6; }
-        .recommendations-section { margin-top: 30px; }
-        .rec-title { font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 20px; display: flex; align-items: center; }
-        .rec-title::before { content: "✨"; margin-right: 10px; font-size: 22px; }
-        .recommendation { background: linear-gradient(135deg, #f0f4ff 0%, #f8f5ff 100%); border-left: 4px solid #667eea; padding: 18px; margin-bottom: 15px; border-radius: 8px; }
-        .recommendation strong { color: #667eea; font-size: 15px; display: block; margin-bottom: 6px; }
-        .recommendation p { margin: 0; color: #475569; font-size: 14px; line-height: 1.6; }
-        .footer { background: #f1f5f9; padding: 30px; text-align: center; border-top: 1px solid #e2e8f0; }
-        .footer p { margin: 0; color: #64748b; font-size: 13px; }
-        .badge { display: inline-block; background: #667eea; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 20px; }
-        .divider { height: 2px; background: linear-gradient(90deg, transparent, #e2e8f0, transparent); margin: 30px 0; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>🚀 Code Analysis Report</h1>
-          <p>AI-Powered Code Review Results</p>
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #f1f5f9; color: #1e293b; }
+        .wrapper { background-color: #f1f5f9; padding: 40px 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .header { background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 40px; text-align: center; color: white; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.025em; }
+        .header p { margin: 8px 0 0; opacity: 0.9; font-size: 16px; }
+        .content { padding: 40px; }
+        .intro { margin-bottom: 30px; font-size: 16px; line-height: 1.6; color: #475569; }
+        .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+        .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 16px; }
+        .score-box { background: #1e293b; color: white; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 24px; }
+        .score-value { font-size: 48px; font-weight: 800; color: #3b82f6; }
+        .recommendation-list { margin: 0; padding: 0; list-style: none; }
+        .recommendation-item { padding: 12px 16px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; font-size: 14px; display: flex; align-items: flex-start; gap: 12px; }
+        .recommendation-list .recommendation-item::before { content: "→"; color: #3b82f6; font-weight: bold; }
+        .footer { padding: 40px; text-align: center; background: #f8fafc; border-top: 1px solid #e2e8f0; }
+        .footer p { margin: 0; color: #94a3b8; font-size: 12px; }
+        .btn { display: inline-block; background: #3b82f6; color: white !important; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            <div class="header">
+                <h1>AI Code Intelligence</h1>
+                <p>${language ? `${language} ` : ''}Analysis Report</p>
+            </div>
+            <div class="content">
+                <div class="intro">
+                    Hello <strong>${recipientName}</strong>,<br><br>
+                    Our AI has completed the analysis of your code. Below is a summary of the findings and actionable insights to improve your software quality.
+                </div>
+                
+                <div class="score-box" style="background: #1e293b;">
+                    <div class="card-title" style="color: #94a3b8;">Health Score</div>
+                    <div class="score-value">${displayScore}</div>
+                    <div style="font-size: 14px; opacity: 0.7;">${scoreMsg}</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Analysis Results</div>
+                    <div class="recommendation-list">
+                        ${content.split('\n').filter(line => line.trim().length > 0).map(rec => `
+                            <div class="recommendation-item">${rec}</div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+            <div class="footer">
+                <p>Sent via AI Code Review Assistant • MKU Final Project</p>
+                <p style="margin-top: 8px;">© 2026 CodeIntel Inc. All rights reserved.</p>
+            </div>
         </div>
-
-        <div class="content">
-          <div class="greeting">Hello ${recipientName},</div>
-          <div class="intro">
-            We've completed an in-depth analysis of your code. Below are our AI-generated recommendations to improve code quality, performance, and maintainability.
-          </div>
-
-          <div class="badge">✓ Analysis Complete</div>
-
-          <div class="recommendations-section">
-            <div class="rec-title">Key Recommendations</div>
-            ${content.split('\n').filter(line => line.trim().length > 0).map(rec =>
-    `<div class="recommendation"><p>${rec}</p></div>`
-  ).join('')}
-          </div>
-
-          <div class="divider"></div>
-
-          <div style="background: #eff6ff; border: 1px solid #bfdbfe; padding: 18px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0; color: #0c4a6e; font-size: 14px; line-height: 1.6;">
-              <strong>💡 Pro Tip:</strong> Implement these recommendations to significantly improve code quality, maintainability, and performance.
-            </p>
-          </div>
-        </div>
-
-        <div class="footer">
-          <p>✨ <strong>Generated by AI Code Review Assistant</strong></p>
-          <p style="margin-top: 12px; font-size: 12px;">This is an automated email. Please do not reply directly to this email.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
+    </div>
+</body>
+</html>`;
 
   const mailOptions = {
     from: process.env.EMAIL_USER,
@@ -164,7 +183,8 @@ exports.sendAnalysisReport = onRequest(withCors(async (req, res) => {
   try {
     const transporter = await getTransporter();
     const info = await transporter.sendMail(mailOptions);
-    const previewUrl = nodemailer.getTestMessageUrl ? nodemailer.getTestMessageUrl(info) : null;
+    const nodemailerLib = require('nodemailer');
+    const previewUrl = nodemailerLib.getTestMessageUrl ? nodemailerLib.getTestMessageUrl(info) : null;
     return res.status(200).json({ success: true, previewUrl });
   } catch (error) {
     logger.error('Error sending analysis report email:', error);
@@ -240,6 +260,7 @@ exports.analyzeCode = onRequest(withCors(async (req, res) => {
   });
 
   const { code, filename, uid } = req.body || {};
+  let analysisId = null;
 
   // Validation
   if (!code || typeof code !== 'string') {
@@ -262,24 +283,22 @@ exports.analyzeCode = onRequest(withCors(async (req, res) => {
   }
 
   try {
-    // Get OpenAI API key from environment or Firebase config
-    const apiKey = process.env.OPENAI_API_KEY || (functions.config().openai && functions.config().openai.key);
+    // Get OpenAI API key from environment
+    const apiKey = process.env.OPENAI_API_KEY;
     logger.info('API key check:', { hasApiKey: !!apiKey, keyLength: apiKey?.length });
 
     if (!apiKey) {
       logger.error('OpenAI API key not configured');
       return res.status(500).json({
-        error: 'AI service not configured. Please set OpenAI API key.',
+        error: 'AI service not configured. Please set OPENAI_API_KEY.',
         hint: 'Check functions/.env file'
       });
     }
 
     // Initialize OpenAI client
     logger.info('Initializing OpenAI client...');
-    const openai = new OpenAI({
-      apiKey: apiKey
-    });
-
+    const OpenAI = getOpenAI();
+    const openai = new OpenAI({ apiKey });
     logger.info('OpenAI client initialized successfully');
 
     // Detect language
@@ -294,83 +313,52 @@ exports.analyzeCode = onRequest(withCors(async (req, res) => {
 
     const language = detectLanguage(code);
 
-    // Call OpenAI with structured prompt for JSON response
-    const prompt = `You are an expert code reviewer and fixer. The code may be incomplete (truncated, missing braces, unfinished blocks) or contain syntax errors.
-Analyze the following ${language} code and provide a comprehensive review in strict JSON format.
+    const prompt = `Analyze the following ${language} code. 
+Focus ONLY on high-impact issues: Security, Performance, and Critical Logic Bugs. 
+Ignore style, documentation, and minor best practices.
 
-Code to analyze:
-\`\`\`${language}
-${code}
-\`\`\`
-
-Return a JSON object with this exact structure:
+Return JSON:
 {
-  "summary": "Brief 2-3 sentence overview of the code",
-  "overallScore": <number 0-100>,
-  "counts": {
-    "critical": <number>,
-    "high": <number>,
-    "medium": <number>,
-    "low": <number>,
-    "codeSmells": <number>
-  },
-  "metrics": {
-    "complexity": <number 0-100>,
-    "performance": <number 0-100>,
-    "maintainability": <number 0-100>,
-    "documentation": <number 0-100>,
-    "security": <number 0-100>,
-    "readability": <number 0-100>
-  },
-  "issues": [
-    {
+  "summary": "2-sentence overview",
+  "overallScore": 0-100,
+  "counts": { "critical": 0, "high": 0, "medium": 0, "low": 0, "codeSmells": 0 },
+  "metrics": { "complexity": 0-100, "performance": 0-100, "maintainability": 0-100, "security": 0-100 },
+  "issues": [{
     "severity": "critical|high|medium|low",
-    "category": "Security|Performance|Best Practices|Style|Documentation",
-    "message": "Clear description of the issue, including if the code looks incomplete or truncated",
-    "line": <line number or 0>,
-    "suggestion": "How to fix it",
-    "code": "The smallest relevant code snippet that shows the problem (optional)",
-    "fixedCode": "A corrected version of the snippet or the full corrected code if appropriate (optional)"
-  }
-],
-  "recommendations": [
-    "Actionable recommendation 1",
-    "Actionable recommendation 2",
-    "Actionable recommendation 3"
-  ],
-  "technicalDebt": "Estimate of time/effort to address all issues"
+    "category": "Security|Performance|Logic",
+    "message": "Concise description",
+    "line": number,
+    "suggestion": "1-sentence fix"
+  }],
+  "recommendations": ["Highest impact fix 1", "rec 2"],
+  "technicalDebt": "Effort"
 }
 
-Additional, very important instructions:
-- If the code appears incomplete or abruptly cut off, you MUST include at least one issue with severity "critical" whose message clearly states that the code is incomplete or truncated, and provide a best-effort completed version of the code in "fixedCode".
-- If there are obvious syntax errors, you MUST include issues that describe them and provide a syntactically valid "fixedCode" snippet or full corrected code.
-- Always return VALID JSON only (no markdown, no backticks, no comments).`;
+Code:
+${code}`;
 
-    // Call OpenAI API (separate from JSON parsing for better error handling)
+    // Call OpenAI API
     logger.info('Calling OpenAI API...');
-    let completion;
+    let openaiResponseText;
     try {
-      completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
-            content: 'You are an expert code reviewer. You MUST respond with valid JSON only. Do not include any markdown formatting, code blocks, or explanatory text. Return only the raw JSON object.'
+            content: 'You are an ultra-fast code reviewer. Output valid JSON only. Prioritize speed and brevity.'
           },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.3,
-        max_tokens: 2000
+        response_format: { type: "json_object" },
+        temperature: 0.1,
+        max_tokens: 800
       });
+      openaiResponseText = completion.choices[0].message.content;
       logger.info('OpenAI API call successful');
     } catch (apiError) {
-      logger.error('OpenAI API error:', {
-        message: apiError.message,
-        status: apiError.status,
-        type: apiError.type,
-        code: apiError.code
-      });
-      throw new Error(`OpenAI API failed: ${apiError.message}`);
+      logger.error('OpenAI API error:', { message: apiError.message });
+      throw new Error(`OpenAI API failed: ${apiError.message} `);
     }
 
     // Parse JSON response with retry logic
@@ -380,11 +368,10 @@ Additional, very important instructions:
 
     while (retryCount < maxRetries) {
       try {
-        const responseText = completion.choices[0].message.content.trim();
         logger.info('Parsing OpenAI response (attempt ' + (retryCount + 1) + ')');
-        logger.info('Response preview:', responseText.substring(0, 200));
+        logger.info('Response preview:', openaiResponseText.substring(0, 200));
 
-        analysisData = extractJSON(responseText);
+        analysisData = extractJSON(openaiResponseText);
         logger.info('Successfully parsed JSON response');
         break;
       } catch (parseError) {
@@ -395,9 +382,9 @@ Additional, very important instructions:
         });
 
         if (retryCount >= maxRetries) {
-          throw new Error(`Failed to parse JSON after ${maxRetries} attempts: ${parseError.message}`);
+          throw new Error(`Failed to parse JSON after ${maxRetries} attempts: ${parseError.message} `);
         }
-        logger.warn(`Retrying JSON parse... (${retryCount}/${maxRetries})`);
+        logger.warn(`Retrying JSON parse... (${retryCount} / ${maxRetries})`);
       }
     }
 
@@ -407,7 +394,7 @@ Additional, very important instructions:
       summary: analysisData.summary || 'Code analysis completed',
       overallScore: analysisData.overallScore || 75,
       issues: (analysisData.issues || []).map((issue, idx) => ({
-        id: `issue-${idx}`,
+        id: `issue - ${idx}`,
         type: issue.category?.toLowerCase() || 'general',
         severity: issue.severity || 'medium',
         category: issue.category || 'Code Quality',
@@ -450,11 +437,12 @@ Additional, very important instructions:
       timestamp: new Date().toISOString()
     };
 
-    // Store in Firestore (optional - won't fail if Firestore is unavailable)
-    let analysisId = null;
+    const crypto = getCrypto();
+    const codeHash = crypto.createHash('sha256').update(code).digest('hex').substring(0, 16);
+    const admin = getAdmin();
+    const { FieldValue } = require('firebase-admin/firestore');
+    const db = admin.firestore();
     try {
-      const codeHash = crypto.createHash('sha256').update(code).digest('hex').substring(0, 16);
-      const db = admin.firestore();
       const analysisDoc = await db.collection('analyses').add({
         codeHash,
         // Store a truncated version of the analyzed code so the UI can show history
@@ -464,7 +452,7 @@ Additional, very important instructions:
         uid: uid || null,
         analysis,
         createdAt: FieldValue.serverTimestamp(),
-        model: 'gpt-3.5-turbo'
+        model: 'gpt-4o-mini'
       });
       analysisId = analysisDoc.id;
       logger.info(`Analysis completed and stored: ${analysisDoc.id}`);
@@ -501,12 +489,10 @@ exports.analyzeGithubRepo = onRequest(withCors(async (req, res) => {
 
   const { repoUrl, uid } = req.body || {};
 
-  // Validation
   if (!repoUrl || typeof repoUrl !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid repoUrl parameter' });
   }
 
-  // Parse GitHub URL
   const githubRegex = /github\.com\/([^\/]+)\/([^\/]+)/;
   const match = repoUrl.match(githubRegex);
 
@@ -517,14 +503,13 @@ exports.analyzeGithubRepo = onRequest(withCors(async (req, res) => {
   const [, owner, repo] = match;
   const repoName = repo.replace(/\.git$/, '');
 
-  // Rate limiting
   const clientId = uid || req.ip || 'anonymous';
   if (!checkRateLimit(clientId, 5, 60000)) {
     return res.status(429).json({ error: 'Rate limit exceeded for GitHub analysis. Please try again later.' });
   }
 
   try {
-    // Fetch repository information
+    const axios = getAxios();
     const repoInfoResponse = await axios.get(`https://api.github.com/repos/${owner}/${repoName}`, {
       headers: {
         'Accept': 'application/vnd.github.v3+json',
@@ -534,12 +519,10 @@ exports.analyzeGithubRepo = onRequest(withCors(async (req, res) => {
 
     const repoInfo = repoInfoResponse.data;
 
-    // Check if repo is public
     if (repoInfo.private) {
       return res.status(403).json({ error: 'Cannot analyze private repositories' });
     }
 
-    // Fetch main files from the repository
     const contentsResponse = await axios.get(`https://api.github.com/repos/${owner}/${repoName}/contents`, {
       headers: {
         'Accept': 'application/vnd.github.v3+json',
@@ -548,8 +531,6 @@ exports.analyzeGithubRepo = onRequest(withCors(async (req, res) => {
     });
 
     const files = contentsResponse.data;
-
-    // Find code files (limit to first 5 for analysis)
     const codeExtensions = ['.js', '.ts', '.py', '.java', '.jsx', '.tsx', '.php', '.rb', '.go'];
     const codeFiles = files.filter(file =>
       file.type === 'file' && codeExtensions.some(ext => file.name.endsWith(ext))
@@ -559,123 +540,53 @@ exports.analyzeGithubRepo = onRequest(withCors(async (req, res) => {
       return res.status(400).json({ error: 'No code files found in repository root' });
     }
 
-    // Fetch content of the first code file
     const firstFile = codeFiles[0];
     const fileContentResponse = await axios.get(firstFile.download_url);
     const codeContent = fileContentResponse.data;
 
-    // Limit code size
     const maxBytes = 60 * 1024;
     if (Buffer.byteLength(codeContent, 'utf8') > maxBytes) {
       return res.status(413).json({ error: `File ${firstFile.name} is too large. Maximum 60KB allowed.` });
     }
 
-    // Get OpenAI API key
-    const apiKey = process.env.OPENAI_API_KEY || (functions.config().openai && functions.config().openai.key);
-
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      logger.error('OpenAI API key not configured');
-      return res.status(500).json({
-        error: 'AI service not configured',
-        hint: 'Run: firebase functions:config:set openai.key="YOUR_KEY"'
-      });
+      return res.status(500).json({ error: 'AI service not configured' });
     }
 
-    // Initialize OpenAI for analysis
-    const openai = new OpenAI({
-      apiKey: apiKey
-    });
-
+    getOpenAI();
+    const openai = new OpenAI({ apiKey });
     const language = firstFile.name.split('.').pop();
 
-    // Analyze with OpenAI
-    const prompt = `You are an expert code reviewer analyzing a GitHub repository.
+    const prompt = `Analyze this GitHub repository file: ${owner}/${repoName}/${firstFile.name} (${language}).
+Strictly prioritize High-Impact issues: Security, Performance, and Major Logic Bugs.
 
-Repository: ${owner}/${repoName}
-File: ${firstFile.name}
-Language: ${language}
-
-Code to analyze:
-\`\`\`${language}
-${codeContent}
-\`\`\`
-
-Repository Info:
-- Stars: ${repoInfo.stargazers_count}
-- Forks: ${repoInfo.forks_count}
-- Description: ${repoInfo.description || 'N/A'}
-- Language: ${repoInfo.language || 'N/A'}
-
-Return a JSON object with this exact structure:
+Return a JSON object:
 {
-  "summary": "Brief overview of the repository and file analyzed",
-  "overallScore": <number 0-100>,
-  "counts": {
-    "critical": <number>,
-    "high": <number>,
-    "medium": <number>,
-    "low": <number>,
-    "codeSmells": <number>
-  },
-  "metrics": {
-    "complexity": <number 0-100>,
-    "performance": <number 0-100>,
-    "maintainability": <number 0-100>,
-    "documentation": <number 0-100>,
-    "security": <number 0-100>,
-    "readability": <number 0-100>
-  },
-  "issues": [
-    {
-      "severity": "critical|high|medium|low",
-      "category": "Security|Performance|Best Practices|Style|Documentation",
-      "message": "Clear description of the issue",
-      "line": <line number or 0>,
-      "suggestion": "How to fix it"
-    }
-  ],
-  "recommendations": [
-    "Repository-level recommendation 1",
-    "Code-level recommendation 2",
-    "Best practices recommendation 3"
-  ],
-  "technicalDebt": "Estimate of time/effort to improve this codebase"
-}`;
+  "summary": "Brief overview",
+  "overallScore": 0-100,
+  "counts": { "critical": 0, "high": 0, "medium": 0, "low": 0, "codeSmells": 0 },
+  "metrics": { "complexity": 0-100, "performance": 0-100, "maintainability": 0-100, "documentation": 0-100, "security": 0-100, "readability": 0-100 },
+  "issues": [{ "severity": "...", "category": "...", "message": "...", "line": 0, "suggestion": "..." }],
+  "recommendations": ["...", "...", "..."],
+  "technicalDebt": "estimate"
+}
+Code:
+${codeContent}`;
 
-    let analysisData;
-    let retryCount = 0;
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are an expert code reviewer. Respond in JSON.' },
+        { role: 'user', content: prompt }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+      max_tokens: 1200
+    });
 
-    while (retryCount < 2) {
-      try {
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an expert code reviewer. You MUST respond with valid JSON only. Do not include any markdown formatting, code blocks, or explanatory text. Return only the raw JSON object.'
-            },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.3,
-          max_tokens: 2000
-        });
+    const analysisData = extractJSON(completion.choices[0].message.content);
 
-        const responseText = completion.choices[0].message.content.trim();
-        logger.info('Received OpenAI response for GitHub analysis, attempting to parse JSON');
-        analysisData = extractJSON(responseText);
-        logger.info('Successfully parsed JSON response for GitHub analysis');
-        break;
-      } catch (parseError) {
-        retryCount++;
-        logger.error('JSON parse error in GitHub analysis:', parseError.message);
-        if (retryCount >= 2) {
-          throw new Error(`Failed to get valid JSON from AI: ${parseError.message}`);
-        }
-        logger.warn(`JSON parse failed for GitHub analysis, retrying... (${retryCount}/2)`);
-      }
-    }
-
-    // Structure response
     const analysis = {
       language: language,
       summary: analysisData.summary || `Analysis of ${firstFile.name} from ${owner}/${repoName}`,
@@ -691,7 +602,6 @@ Return a JSON object with this exact structure:
         analyzedFile: firstFile.name,
         totalFilesFound: codeFiles.length
       },
-      // Expose the analyzed source code so the frontend can populate the editor
       sourceCode: codeContent,
       issues: (analysisData.issues || []).map((issue, idx) => ({
         id: `issue-${idx}`,
@@ -737,50 +647,28 @@ Return a JSON object with this exact structure:
       timestamp: new Date().toISOString()
     };
 
-    // Store in Firestore (optional - won't fail if Firestore is unavailable)
     let analysisId = null;
     try {
+      const admin = getAdmin();
       const db = admin.firestore();
       const analysisDoc = await db.collection('analyses').add({
-        type: 'github',
-        repository: {
-          owner,
-          name: repoName,
-          url: repoUrl
-        },
-        filename: firstFile.name,
+        codeHash: 'github-import',
+        codeSnippet: codeContent.substring(0, 4000),
         language,
         uid: uid || null,
         analysis,
-        // Store a truncated version of the analyzed code to support history/restore
-        codeSnippet: codeContent.length > 4000 ? codeContent.substring(0, 4000) : codeContent,
-        createdAt: FieldValue.serverTimestamp(),
-        model: 'gpt-3.5-turbo'
+        createdAt: require('firebase-admin').firestore.FieldValue.serverTimestamp(),
+        model: 'gpt-4o-mini'
       });
       analysisId = analysisDoc.id;
-      logger.info(`GitHub analysis completed: ${analysisDoc.id}`);
     } catch (firestoreError) {
-      logger.warn('Firestore storage failed (analysis still successful):', firestoreError.message);
+      logger.warn('Firestore storage failed:', firestoreError.message);
     }
 
-    return res.status(200).json({
-      success: true,
-      analysis,
-      analysisId
-    });
-
+    return res.status(200).json({ success: true, analysis, analysisId });
   } catch (error) {
     logger.error('GitHub analysis error:', error);
-
-    if (error.response?.status === 404) {
-      return res.status(404).json({ error: 'Repository not found' });
-    }
-
-    if (error.response?.status === 403) {
-      return res.status(403).json({ error: 'GitHub API rate limit exceeded or access denied' });
-    }
-
-    return res.status(500).json({
+    return res.status(error.response?.status || 500).json({
       error: 'Failed to analyze GitHub repository',
       details: error.message
     });
@@ -807,11 +695,12 @@ exports.fixCode = onRequest(withCors(async (req, res) => {
   }
 
   try {
-    const apiKey = process.env.OPENAI_API_KEY || (functions.config().openai && functions.config().openai.key);
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'AI service not configured.' });
     }
 
+    const OpenAI = getOpenAI();
     const openai = new OpenAI({ apiKey });
 
     // Construct a focused prompt
@@ -819,30 +708,27 @@ exports.fixCode = onRequest(withCors(async (req, res) => {
       ? issues.map(i => `- [${i.severity}] ${i.message} (Line ${i.line})`).join('\n')
       : "General code improvements and syntax cleanup.";
 
-    const prompt = `You are an expert software engineer.
-Your task is to FIX the following ${language || 'source'} code.
-Address these specific reported issues:
+    const prompt = `FIX the following ${language || 'source'} code.
+Address only these issues:
 ${issueDescriptions}
 
-Instructions:
-1. Return ONLY the fixed code.
-2. Do NOT wrap in markdown backticks.
-3. Do NOT add comments explaining what you did unless necessary for the code itself.
-4. Maintain the original coding style.
-5. Fix ALL syntax errors and incomplete code blocks.
+Return ONLY the raw fixed code. No markdown, no text, no explanations.
 
 Code to fix:
 ${code}`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o', // Use a smart model for fixing if available, otherwise gpt-3.5-turbo
+      model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You are a code fixing engine. Output strictly raw code only. No markdown formatting.' },
+        {
+          role: 'system',
+          content: 'You are an ultra-fast code fixing engine. Output strictly raw code. No explanations. Prioritize speed.'
+        },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.2, // Low temperature for precision
+      temperature: 0.1,
+      max_tokens: 1500
     });
-
     let fixedCode = completion.choices[0].message.content.trim();
 
     // Cleanup potential markdown if the model ignores instructions
@@ -867,6 +753,7 @@ exports.listRecentAnalyses = onRequest(withCors(async (req, res) => {
   const { uid, limit = 10 } = req.method === 'GET' ? req.query : req.body || {};
 
   try {
+    const admin = getAdmin();
     const db = admin.firestore();
     let query = db.collection('analyses')
       .orderBy('createdAt', 'desc')
@@ -923,6 +810,7 @@ exports.sendRecommendationEmailV2 = onRequest(withCors(async (req, res) => {
 
   try {
     // Fetch analysis from Firestore
+    const admin = getAdmin();
     const db = admin.firestore();
     const analysisDoc = await db.collection('analyses').doc(analysisId).get();
 
@@ -960,80 +848,80 @@ exports.sendRecommendationEmailV2 = onRequest(withCors(async (req, res) => {
       subject: mailSubject,
       text: `Code Review Summary\n\nScore: ${overallScore}%\n\nSummary:\n${summary}\n\nRecommendations:\n${recommendations.map((r, i) => `${i + 1}. ${r}`).join('\n')}\n\nBest regards,\nAI Code Review Assistant`,
       html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <style>
-            body { margin: 0; padding: 0; font-family: 'Segoe UI', 'Roboto', Arial, sans-serif; background: #f8fafc; }
-            .container { max-width: 700px; margin: 0 auto; background: #ffffff; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 50px 30px; text-align: center; color: #ffffff; }
-            .header h1 { margin: 0; font-size: 32px; font-weight: 700; }
-            .header p { margin: 10px 0 0 0; font-size: 16px; opacity: 0.95; }
-            .content { padding: 40px 30px; }
-            .score-card { background: linear-gradient(135deg, ${scoreColor}15 0%, ${scoreColor}05 100%); border: 2px solid ${scoreColor}; padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 30px; }
-            .score-card .label { font-size: 14px; color: #64748b; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-            .score-card .score { font-size: 48px; font-weight: 700; color: ${scoreColor}; margin: 0; }
-            .summary-box { background: #f0f4ff; border-left: 4px solid #667eea; padding: 20px; border-radius: 8px; margin: 25px 0; }
-            .summary-box p { margin: 0; color: #1e293b; font-size: 15px; line-height: 1.6; }
-            .rec-section { margin-top: 30px; }
-            .rec-title { font-size: 20px; font-weight: 700; color: #1e293b; margin-bottom: 20px; }
-            .rec-title::before { content: "💡"; margin-right: 10px; }
-            .recommendation-card { background: linear-gradient(135deg, #f0f4ff 0%, #f8f5ff 100%); border-left: 4px solid #667eea; padding: 18px; margin-bottom: 15px; border-radius: 8px; transition: transform 0.2s; }
-            .recommendation-card:hover { transform: translateX(4px); }
-            .recommendation-card p { margin: 0; color: #1e293b; font-size: 15px; line-height: 1.6; }
-            .footer { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; color: #ffffff; }
-            .footer p { margin: 0; font-size: 13px; opacity: 0.95; }
-            .divider { height: 3px; background: linear-gradient(90deg, #667eea, #764ba2, #667eea); margin: 30px 0; border-radius: 2px; }
-            .star { color: #fbbf24; margin: 0 3px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🚀 Code Review Results</h1>
-              <p>AI-Powered Analysis & Recommendations</p>
-            </div>
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                      body {margin: 0; padding: 0; font-family: 'Segoe UI', 'Roboto', Arial, sans-serif; background: #f8fafc; }
+                      .container {max - width: 700px; margin: 0 auto; background: #ffffff; }
+                      .header {background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 50px 30px; text-align: center; color: #ffffff; }
+                      .header h1 {margin: 0; font-size: 32px; font-weight: 700; }
+                      .header p {margin: 10px 0 0 0; font-size: 16px; opacity: 0.95; }
+                      .content {padding: 40px 30px; }
+                      .score-card {background: linear-gradient(135deg, ${scoreColor}15 0%, ${scoreColor}05 100%); border: 2px solid ${scoreColor}; padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 30px; }
+                      .score-card .label {font - size: 14px; color: #64748b; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+                      .score-card .score {font - size: 48px; font-weight: 700; color: ${scoreColor}; margin: 0; }
+                      .summary-box {background: #f0f4ff; border-left: 4px solid #667eea; padding: 20px; border-radius: 8px; margin: 25px 0; }
+                      .summary-box p {margin: 0; color: #1e293b; font-size: 15px; line-height: 1.6; }
+                      .rec-section {margin - top: 30px; }
+                      .rec-title {font - size: 20px; font-weight: 700; color: #1e293b; margin-bottom: 20px; }
+                      .rec-title::before {content: "💡"; margin-right: 10px; }
+                      .recommendation-card {background: linear-gradient(135deg, #f0f4ff 0%, #f8f5ff 100%); border-left: 4px solid #667eea; padding: 18px; margin-bottom: 15px; border-radius: 8px; transition: transform 0.2s; }
+                      .recommendation-card:hover {transform: translateX(4px); }
+                      .recommendation-card p {margin: 0; color: #1e293b; font-size: 15px; line-height: 1.6; }
+                      .footer {background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; color: #ffffff; }
+                      .footer p {margin: 0; font-size: 13px; opacity: 0.95; }
+                      .divider {height: 3px; background: linear-gradient(90deg, #667eea, #764ba2, #667eea); margin: 30px 0; border-radius: 2px; }
+                      .star {color: #fbbf24; margin: 0 3px; }
+                    </style>
+                  </head>
+                  <body>
+                    <div class="container">
+                      <div class="header">
+                        <h1>🚀 Code Review Results</h1>
+                        <p>AI-Powered Analysis & Recommendations</p>
+                      </div>
 
-            <div class="content">
-              <div class="score-card">
-                <div class="label">Your Code Quality Score</div>
-                <p class="score">${overallScore}%</p>
-              </div>
+                      <div class="content">
+                        <div class="score-card">
+                          <div class="label">Your Code Quality Score</div>
+                          <p class="score">${overallScore}%</p>
+                        </div>
 
-              <div class="summary-box">
-                <p>${summary}</p>
-              </div>
+                        <div class="summary-box">
+                          <p>${summary}</p>
+                        </div>
 
-              <div class="divider"></div>
+                        <div class="divider"></div>
 
-              <div class="rec-section">
-                <h2 class="rec-title">Key Recommendations</h2>
-                ${recommendations.map((r, i) => `
+                        <div class="rec-section">
+                          <h2 class="rec-title">Key Recommendations</h2>
+                          ${recommendations.map((r, i) => `
                   <div class="recommendation-card">
                     <p><span class="star">★</span> <strong>${i + 1}.</strong> ${r}</p>
                   </div>
                 `).join('')}
-              </div>
+                        </div>
 
-              <div class="divider"></div>
+                        <div class="divider"></div>
 
-              <div style="background: #fef3c7; border: 1px solid #fcd34d; padding: 20px; border-radius: 8px; margin: 25px 0;">
-                <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
-                  <strong>✨ Next Steps:</strong> Review these recommendations carefully and implement them to significantly enhance your code quality. Each suggestion is prioritized based on impact and ease of implementation.
-                </p>
-              </div>
-            </div>
+                        <div style="background: #fef3c7; border: 1px solid #fcd34d; padding: 20px; border-radius: 8px; margin: 25px 0;">
+                          <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
+                            <strong>✨ Next Steps:</strong> Review these recommendations carefully and implement them to significantly enhance your code quality. Each suggestion is prioritized based on impact and ease of implementation.
+                          </p>
+                        </div>
+                      </div>
 
-            <div class="footer">
-              <p style="font-size: 16px; margin-bottom: 8px;">✨ AI Code Review Assistant</p>
-              <p style="font-size: 12px; margin: 0;">Powered by Advanced Code Analysis Technology</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `
+                      <div class="footer">
+                        <p style="font-size: 16px; margin-bottom: 8px;">✨ AI Code Review Assistant</p>
+                        <p style="font-size: 12px; margin: 0;">Powered by Advanced Code Analysis Technology</p>
+                      </div>
+                    </div>
+                  </body>
+                </html>
+                `
     };
 
     const transporter = await getTransporter();

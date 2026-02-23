@@ -16,7 +16,8 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
-  Lightbulb
+  Lightbulb,
+  Bookmark
 } from 'lucide-react';
 
 interface Issue {
@@ -77,12 +78,22 @@ interface ReviewPanelProps {
   sessionId: string;
   onRateIssue?: (index: number, rating: 1 | -1) => void;
   onFlagIssue?: (index: number) => void;
-  currentUserEmail?: string;
-  analysisId?: string | null;
+  wasAutoFixed?: boolean;
+  onIssueClick?: (line: number) => void;
+  onSaveSnippet?: () => void;
 }
 
-const ReviewPanel: React.FC<ReviewPanelProps> = ({ analysis, isAnalyzing, isFixing = false, onAutoFix, onRateIssue, onFlagIssue, currentUserEmail, analysisId }) => {
-  // ... (lines 84-282 omitted) ...
+const ReviewPanel: React.FC<ReviewPanelProps> = ({
+  analysis,
+  isAnalyzing,
+  isFixing = false,
+  onAutoFix,
+  onRateIssue,
+  onFlagIssue,
+  wasAutoFixed = false,
+  onIssueClick,
+  onSaveSnippet
+}) => {
 
   const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -97,13 +108,33 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({ analysis, isAnalyzing, isFixi
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [displayedScore, setDisplayedScore] = useState(0);
+
+  // Animate score when it changes
+  React.useEffect(() => {
+    if (!analysis) return;
+    const target = analysis.overallScore;
+    const duration = 1000;
+    const frameDuration = 1000 / 60;
+    const totalFrames = Math.round(duration / frameDuration);
+    let frame = 0;
+
+    const timer = setInterval(() => {
+      frame++;
+      const progress = frame / totalFrames;
+      setDisplayedScore(Math.round(target * progress));
+      if (frame === totalFrames) clearInterval(timer);
+    }, frameDuration);
+
+    return () => clearInterval(timer);
+  }, [analysis?.overallScore]);
 
   // Open modal - show AI-generated content
   const openSendModal = () => {
     // No need to check analysis here - button is only visible when analysis exists
     if (!analysis) return; // Safety check
 
-    // Generate a comprehensive summary with AI recommendations
+    // Generate a comprehensive summary with AI recommendations and detailed issues
     const summary = `
 === CODE REVIEW SUMMARY ===
 
@@ -127,6 +158,15 @@ Total Issues: ${analysis.summary.totalIssues}
 
 === AI RECOMMENDATIONS ===
 ${analysis.recommendations.map((rec, i) => `${i + 1}. ${rec}`).join('\n')}
+
+=== DETAILED ISSUES ===
+${analysis.issues.map((iss, i) => {
+      let issueDetails = `${i + 1}. [${iss.severity.toUpperCase()}] ${iss.category}: ${iss.message}`;
+      if (iss.line) issueDetails += ` (Line ${iss.line})`;
+      if (iss.suggestion) issueDetails += `\n   Suggestion: ${iss.suggestion}`;
+      if (iss.fixedCode) issueDetails += `\n   Fixed Code: \n\`\`\`\n${iss.fixedCode}\n\`\`\``;
+      return issueDetails;
+    }).join('\n\n')}
 
 === TECHNICAL DEBT ===
 ${analysis.technicalDebt}
@@ -274,21 +314,29 @@ ${analysis.technicalDebt}
           </div>
           <div className="text-right space-y-2">
             <div>
-              <div className={`text-4xl font-bold ${getScoreColor(analysis.overallScore)}`}>
-                {analysis.overallScore}%
+              <div className={`text-4xl font-bold transition-all duration-500 ${getScoreColor(analysis.overallScore)}`}>
+                {displayedScore}%
               </div>
               <div className="text-sm text-gray-500 dark:text-gray-400">Overall Score</div>
             </div>
 
+            {wasAutoFixed && (
+              <div className="flex justify-end">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Auto-Fixed &amp; Re-analyzed
+                </span>
+              </div>
+            )}
             <div className="flex gap-2 justify-end">
               {analysis.issues.length > 0 && (
                 <button
                   onClick={onAutoFix}
                   disabled={isFixing}
                   className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white shadow-lg transform transition-all ${isFixing ? 'bg-gray-400 cursor-wait' :
-                      hasAutoFix
-                        ? 'bg-green-600 hover:bg-green-700 hover:scale-105'
-                        : 'bg-blue-600 hover:bg-blue-700 hover:scale-105'
+                    hasAutoFix
+                      ? 'bg-green-600 hover:bg-green-700 hover:scale-105'
+                      : 'bg-blue-600 hover:bg-blue-700 hover:scale-105'
                     }`}
                   title={hasAutoFix ? "Apply suggested fixes" : "Attempt to fix issues automatically"}
                 >
@@ -303,6 +351,16 @@ ${analysis.technicalDebt}
                       {hasAutoFix ? "Fix Issues" : "Auto Fix"}
                     </>
                   )}
+                </button>
+              )}
+              {onSaveSnippet && (
+                <button
+                  onClick={onSaveSnippet}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 shadow-sm transition-all hover:scale-105"
+                  title="Save this snippet and analysis to your library"
+                >
+                  <Bookmark className="w-4 h-4 mr-2" />
+                  Save to Library
                 </button>
               )}
             </div>
@@ -369,6 +427,12 @@ ${analysis.technicalDebt}
               <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.complexity)}`}>
                 {analysis.metrics.complexity}%
               </div>
+              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2">
+                <div
+                  className={`h-1.5 rounded-full transition-all duration-1000 ${analysis.metrics.complexity >= 80 ? 'bg-green-500' : analysis.metrics.complexity >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                  style={{ width: `${analysis.metrics.complexity}%` }}
+                ></div>
+              </div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
               <div className="flex items-center justify-between mb-2">
@@ -378,6 +442,12 @@ ${analysis.technicalDebt}
               <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.maintainability)}`}>
                 {analysis.metrics.maintainability}%
               </div>
+              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2">
+                <div
+                  className={`h-1.5 rounded-full transition-all duration-1000 ${analysis.metrics.maintainability >= 80 ? 'bg-green-500' : analysis.metrics.maintainability >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                  style={{ width: `${analysis.metrics.maintainability}%` }}
+                ></div>
+              </div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
               <div className="flex items-center justify-between mb-2">
@@ -386,6 +456,12 @@ ${analysis.technicalDebt}
               </div>
               <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.security)}`}>
                 {analysis.metrics.security}%
+              </div>
+              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2">
+                <div
+                  className={`h-1.5 rounded-full transition-all duration-1000 ${analysis.metrics.security >= 80 ? 'bg-green-500' : analysis.metrics.security >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                  style={{ width: `${analysis.metrics.security}%` }}
+                ></div>
               </div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
@@ -501,14 +577,17 @@ ${analysis.technicalDebt}
                 key={index}
                 className={`border rounded-lg p-4 ${getSeverityColor(issue.severity)} transition-all duration-200`}
               >
-                <div className="flex items-start justify-between">
+                <div
+                  className="flex items-start justify-between cursor-pointer group"
+                  onClick={() => issue.line && onIssueClick?.(issue.line)}
+                >
                   <div className="flex items-start space-x-3 flex-1">
                     <div className="flex-shrink-0 mt-1">
                       {getSeverityIcon(issue.severity)}
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center space-x-2 mb-2">
-                        <h4 className="font-medium text-gray-900 dark:text-white">
+                        <h4 className="font-medium text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                           {issue.message}
                         </h4>
                         <span className={`px-2 py-1 text-xs rounded-full ${getSeverityColor(issue.severity)}`}>
@@ -770,8 +849,10 @@ ${analysis.technicalDebt}
                     body: JSON.stringify({
                       email: recipientEmail,
                       name: recipientName,
-                      subject: `Code Review Results for ${recipientName}`,
-                      content: recommendationToSend
+                      subject: `Code Review: ${analysis?.language || 'Code'} Analysis for ${recipientName}`,
+                      content: recommendationToSend,
+                      score: analysis?.overallScore,
+                      language: analysis?.language
                     }),
                   });
 
