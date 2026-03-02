@@ -6,6 +6,7 @@ import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
 import { Star, Share2, Clock, AlertTriangle, Code, XCircle, Copy, ArrowLeftRight } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
+import { analyzeCodeWithAI, fixCodeWithAI } from '../services/aiAnalysis';
 
 interface HomePageProps { user: User; }
 
@@ -110,126 +111,66 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     return 'unknown';
   };
 
-  // Analyze GitHub Repository
+  // Analyze GitHub Repository — fetch file content then run AI analysis
   const analyzeGithubRepo = async (repoUrl: string) => {
     setIsAnalyzing(true);
-
     try {
-      // Validate URL
       const trimmedUrl = repoUrl.trim();
-      if (!trimmedUrl.startsWith('http')) {
-        throw new Error('Invalid repository URL. Must start with http:// or https://');
-      }
+      if (!trimmedUrl.startsWith('http')) throw new Error('Invalid repository URL. Must start with http:// or https://');
 
-      // Use production cloud function URL in production, otherwise prefer local emulator
-      const prodUrl = 'https://us-central1-project-70cbf.cloudfunctions.net/analyzeGithubRepo';
-      const devProxyUrl = '/api/analyzeGithubRepo';
-      const emulatorHttp127 = 'http://127.0.0.1:5001/project-70cbf/us-central1/analyzeGithubRepo';
-      const emulatorHttpLocal = 'http://localhost:5001/project-70cbf/us-central1/analyzeGithubRepo';
-      const emulatorHttps127 = 'https://127.0.0.1:5001/project-70cbf/us-central1/analyzeGithubRepo';
+      const match = trimmedUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!match) throw new Error('Invalid GitHub repository URL');
+      const [, owner, repo] = match;
+      const repoName = repo.replace(/\.git$/, '');
 
-      // Try the proxy/emulator first in development for better local DX
-      const tryUrls = process.env.NODE_ENV === 'production'
-        ? [prodUrl]
-        : [devProxyUrl, emulatorHttp127, emulatorHttpLocal, emulatorHttps127, prodUrl];
-
-      let resp: Response | null = null;
-      let lastError: unknown = null;
-      const payload = { repoUrl: trimmedUrl, uid: user.uid };
-      console.debug('analyzeGithubRepo will try URLs:', tryUrls);
-
-      for (const url of tryUrls) {
-        try {
-          resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-
-          // If we get a network-level failure resp may still be undefined
-          if (!resp) continue;
-
-          // If endpoint exists but returned non-2xx, surface server message
-          if (!resp.ok) {
-            const errorData = await resp.json().catch(() => ({}));
-            const msg = (errorData && (errorData.error || errorData.message)) || `Request to ${url} failed with status ${resp.status}`;
-            throw new Error(msg);
-          }
-
-          // success
-          break;
-        } catch (err) {
-          lastError = err;
-          console.warn(`Request to ${url} failed:`, err);
-          // try the next URL in tryUrls
-          resp = null;
-          continue;
-        }
-      }
-
-      if (!resp) {
-        const err = lastError instanceof Error ? lastError : new Error(String(lastError));
-        throw new Error(`Failed to contact analysis service: ${err.message}. Run the functions emulator or check network/proxy settings.`);
-      }
-
-      const data = await resp.json().catch((e) => {
-        throw new Error(`Failed to parse JSON from analysis service at ${resp!.url}: ${String(e)}`);
+      // Fetch repo metadata
+      const repoResp = await fetch(`https://api.github.com/repos/${owner}/${repoName}`, {
+        headers: { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' },
       });
-      const server = data.analysis || data;
+      if (!repoResp.ok) throw new Error(`GitHub API error: ${repoResp.status} — is this a valid public repo?`);
+      const repoInfo = await repoResp.json() as Record<string, unknown>;
+      if (repoInfo.private) throw new Error('Cannot analyze private repositories');
 
-      const codeSnippetFromServer: string | undefined =
-        (server.sourceCode as string | undefined) ||
-        (server.repository && (server.repository.analyzedFileContent as string | undefined));
+      // Fetch file list
+      const contentsResp = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents`, {
+        headers: { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' },
+      });
+      if (!contentsResp.ok) throw new Error('Failed to fetch repository contents');
+      const files = await contentsResp.json() as Array<Record<string, unknown>>;
 
+      const codeExts = ['.js', '.ts', '.py', '.java', '.jsx', '.tsx', '.php', '.rb', '.go', '.cpp', '.c'];
+      const codeFiles = files.filter(f => f.type === 'file' && codeExts.some(ext => (f.name as string).endsWith(ext))).slice(0, 5);
+      if (!codeFiles.length) throw new Error('No code files found in repository root');
+
+      const firstFile = codeFiles[0];
+      const fileResp = await fetch(firstFile.download_url as string);
+      const codeContent = await fileResp.text();
+      if (codeContent.length > 60 * 1024) throw new Error(`File ${firstFile.name} is too large (> 60 KB)`);
+
+      // Populate editor then analyze
+      setCode(codeContent);
+      const result = await analyzeCodeWithAI(codeContent);
       const newAnalysis: AppAnalysis = {
-        language: server.language || 'unknown',
-        overallScore: server.overallScore ?? 75,
-        issues: server.issues || [],
-        summary: server.summary || {
-          totalIssues: 0, criticalIssues: 0, highIssues: 0, mediumIssues: 0, lowIssues: 0,
-          securityIssues: 0, performanceIssues: 0, qualityIssues: 0
+        ...result,
+        repository: {
+          owner, name: repoName, url: trimmedUrl,
+          stars: repoInfo.stargazers_count,
+          forks: repoInfo.forks_count,
+          description: repoInfo.description,
+          language: repoInfo.language,
+          analyzedFile: firstFile.name,
+          totalFilesFound: codeFiles.length,
         },
-        metrics: server.metrics || {
-          complexity: 1, maintainability: 75, readability: 75, performance: 75, security: 75,
-          documentation: 25, cyclomaticComplexity: 1, cognitiveComplexity: 1,
-          linesOfCode: codeSnippetFromServer ? codeSnippetFromServer.split('\n').length : 0,
-          duplicateLines: 0,
-          testCoverage: 0
-        },
-        recommendations: server.recommendations || [],
-        codeSmells: server.codeSmells || 0,
-        technicalDebt: server.technicalDebt || 'n/a',
-        repository: server.repository || null,
-        codeSnippet: codeSnippetFromServer
+        codeSnippet: codeContent,
       };
 
       setAnalysis(newAnalysis);
       setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
 
-      // Populate the editor with the imported GitHub file so it can be edited directly
-      if (codeSnippetFromServer) {
-        setCode(codeSnippetFromServer);
-      }
-
-      // If in a collaborative session, sync GitHub-imported code and analysis
       if (collabSessionId) {
         const sessionRef = doc(db, 'collabSessions', collabSessionId);
-        await setDoc(
-          sessionRef,
-          {
-            code: codeSnippetFromServer || '',
-            analysis: newAnalysis,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
+        await setDoc(sessionRef, { code: codeContent, analysis: newAnalysis, updatedAt: serverTimestamp() }, { merge: true });
       }
-
-      // Store the analysisId from backend
-      if (data.analysisId) {
-        setCurrentAnalysisId(data.analysisId);
-      }
-
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error('GitHub analysis failed:', err);
@@ -242,113 +183,21 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   // Prefer serverless analysis for accuracy; fallback to local analyzer
   const analyzeCode = async (codeContent: string) => {
     setIsAnalyzing(true);
-
     try {
-      const language = detectLanguage(codeContent);
-
-      // Check payload size limit (60KB)
-      const maxSize = 60 * 1024; // 60KB
-      if (codeContent.length > maxSize) {
-        const sizeKb = (codeContent.length / 1024).toFixed(1);
-        const maxKb = (maxSize / 1024).toFixed(0);
-        console.warn(`Code truncated from ${sizeKb}KB to ${maxKb}KB to respect backend limit`);
-        alert(`⚠️ Code exceeds maximum size (${sizeKb}KB > ${maxKb}KB). Analysis will use first ${maxKb}KB of code only.\n\nTip: Upload fewer files or smaller files for better results.`);
-      }
-
-      // Use production cloud function URL in production
-      const prodUrl = 'https://us-central1-project-70cbf.cloudfunctions.net/analyzeCode';
-
-      // In development, try the most likely URLs first
-      const tryUrls = process.env.NODE_ENV === 'production'
-        ? [prodUrl]
-        : ['http://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode', 'http://localhost:5001/project-70cbf/us-central1/analyzeCode', '/api/analyzeCode', prodUrl];
-
-      let resp: Response | null = null;
-      let lastError: unknown = null;
-      const codeToAnalyze = codeContent.length > maxSize ? codeContent.substring(0, maxSize) : codeContent;
-      const payload = { code: codeToAnalyze, language, uid: user.uid };
-      console.debug('analyzeCode will try URLs:', tryUrls);
-
-      for (const url of tryUrls) {
-        try {
-          resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-user-id': user.uid },
-            body: JSON.stringify(payload),
-          });
-
-          if (!resp) continue;
-
-          if (!resp.ok) {
-            const errorData = await resp.json().catch(() => ({}));
-            const msg = (errorData && (errorData.error || errorData.message)) || `Request to ${url} failed with status ${resp.status}`;
-            throw new Error(msg);
-          }
-
-          // success
-          break;
-        } catch (err) {
-          lastError = err;
-          console.warn(`Request to ${url} failed:`, err);
-          resp = null;
-          continue;
-        }
-      }
-
-      if (!resp) {
-        const err = lastError instanceof Error ? lastError : new Error(String(lastError));
-        throw new Error(`Failed to contact analysis service: ${err.message}. Run the functions emulator or check network/proxy settings.`);
-      }
-
-      const data = await resp.json().catch((e) => {
-        throw new Error(`Failed to parse JSON from analysis service at ${resp!.url}: ${String(e)}`);
-      });
-      const server = data.analysis || data;
-      const newAnalysis: AppAnalysis = {
-        language: server.language || language,
-        overallScore: server.overallScore ?? 75,
-        issues: server.issues || [],
-        summary: server.summary || {
-          totalIssues: 0, criticalIssues: 0, highIssues: 0, mediumIssues: 0, lowIssues: 0,
-          securityIssues: 0, performanceIssues: 0, qualityIssues: 0
-        },
-        metrics: server.metrics || {
-          complexity: 1, maintainability: 75, readability: 75, performance: 75, security: 75,
-          documentation: 25, cyclomaticComplexity: 1, cognitiveComplexity: 1,
-          linesOfCode: codeContent.split('\n').length, duplicateLines: 0, testCoverage: 0
-        },
-        recommendations: server.recommendations || [],
-        codeSmells: server.codeSmells || 0,
-        technicalDebt: server.technicalDebt || 'n/a'
-      };
+      const result = await analyzeCodeWithAI(codeContent);
+      const newAnalysis: AppAnalysis = { ...result };
 
       setAnalysis(newAnalysis);
-      setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]); // Keep last 10 analyses
+      setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
 
-      if (data.analysisId) {
-        setCurrentAnalysisId(data.analysisId);
-      }
-
-      // If in a collaborative session, sync latest code + analysis to Firestore
       if (collabSessionId) {
         const sessionRef = doc(db, 'collabSessions', collabSessionId);
-        await setDoc(
-          sessionRef,
-          {
-            code: codeContent,
-            analysis: newAnalysis,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
+        await setDoc(sessionRef, { code: codeContent, analysis: newAnalysis, updatedAt: serverTimestamp() }, { merge: true });
       }
-
-
-
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error('AI analysis failed:', err);
-      alert(`Analysis failed: ${err.message || 'Unable to analyze code. Please check if OpenAI API key is configured in functions/.env file.'}`);
+      alert(`Analysis failed: ${err.message}`);
       setAnalysis(null);
     } finally {
       setIsAnalyzing(false);
@@ -424,135 +273,31 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
   // Apply AI fix to the editor, then automatically re-analyze the fixed code
   const handleAutoFix = async () => {
-    if (!analysis) {
-      alert('Please analyze some code first.');
-      return;
-    }
-    if (!code.trim()) {
-      alert('No code in the editor to fix.');
-      return;
-    }
+    if (!analysis) { alert('Please analyze some code first.'); return; }
+    if (!code.trim()) { alert('No code in the editor to fix.'); return; }
 
     try {
       setIsFixing(true);
       setAutoFixMessage(null);
       setWasAutoFixed(false);
-      setOriginalCode(code); // Capture original before fix
+      setOriginalCode(code);
 
-      // Build the list of URLs to try (same pattern as analyzeCode)
-      const prodUrl = 'https://us-central1-project-70cbf.cloudfunctions.net/fixCode';
-      const devProxyUrl = '/api/fixCode';
-      const emulatorUrl = 'http://127.0.0.1:5001/project-70cbf/us-central1/fixCode';
-      const emulatorLocalUrl = 'http://localhost:5001/project-70cbf/us-central1/fixCode';
+      // 1. Fix the code via AI
+      const fixedCode = await fixCodeWithAI(code, analysis.issues, analysis.language);
 
-      const tryUrls = process.env.NODE_ENV === 'production'
-        ? [prodUrl]
-        : [emulatorUrl, emulatorLocalUrl, devProxyUrl, prodUrl];
-
-      let resp: Response | null = null;
-      let lastError: unknown = null;
-      const payload = {
-        code,
-        issues: analysis.issues,
-        language: analysis.language,
-        uid: user?.uid,
-      };
-
-      for (const url of tryUrls) {
-        try {
-          resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          if (!resp.ok) {
-            const errData = await resp.json().catch(() => ({}));
-            throw new Error((errData && (errData.error || errData.message)) || `HTTP ${resp.status}`);
-          }
-          break;
-        } catch (err) {
-          lastError = err;
-          resp = null;
-        }
-      }
-
-      if (!resp) {
-        const msg = lastError instanceof Error ? lastError.message : String(lastError);
-        throw new Error(`Failed to reach fix service: ${msg}`);
-      }
-
-      const data = await resp.json();
-
-      if (!data.fixedCode) {
-        throw new Error('The fix service did not return fixed code.');
-      }
-
-      // 1. Update the editor with the fully fixed code
-      const fixedCode = data.fixedCode;
       setCode(fixedCode);
       setIsFixing(false);
       setWasAutoFixed(true);
-      setViewMode('diff'); // Switch to diff view automatically
+      setViewMode('diff');
 
-      // 2. Automatically re-analyze the fixed code
+      // 2. Re-analyze the fixed code
       setAutoFixMessage('✨ Code fixed! Re-analyzing to verify improvements...');
       setIsAnalyzing(true);
-
       try {
-        const language = analysis.language;
-        const analyzeUrls = process.env.NODE_ENV === 'production'
-          ? ['https://us-central1-project-70cbf.cloudfunctions.net/analyzeCode']
-          : [
-            'http://127.0.0.1:5001/project-70cbf/us-central1/analyzeCode',
-            'http://localhost:5001/project-70cbf/us-central1/analyzeCode',
-            '/api/analyzeCode',
-            'https://us-central1-project-70cbf.cloudfunctions.net/analyzeCode'
-          ];
-
-        let analyzeResp: Response | null = null;
-        for (const url of analyzeUrls) {
-          try {
-            analyzeResp = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-user-id': user.uid },
-              body: JSON.stringify({ code: fixedCode, language, uid: user.uid }),
-            });
-            if (!analyzeResp.ok) {
-              const errData = await analyzeResp.json().catch(() => ({}));
-              throw new Error((errData && (errData.error || errData.message)) || `HTTP ${analyzeResp.status}`);
-            }
-            break;
-          } catch (err) {
-            analyzeResp = null;
-          }
-        }
-
-        if (analyzeResp) {
-          const analyzeData = await analyzeResp.json();
-          const server = analyzeData.analysis || analyzeData;
-          const newAnalysis: AppAnalysis = {
-            language: server.language || language,
-            overallScore: server.overallScore ?? 75,
-            issues: server.issues || [],
-            summary: server.summary || {
-              totalIssues: 0, criticalIssues: 0, highIssues: 0, mediumIssues: 0, lowIssues: 0,
-              securityIssues: 0, performanceIssues: 0, qualityIssues: 0
-            },
-            metrics: server.metrics || {
-              complexity: 1, maintainability: 75, readability: 75, performance: 75, security: 75,
-              documentation: 25, cyclomaticComplexity: 1, cognitiveComplexity: 1,
-              linesOfCode: fixedCode.split('\n').length, duplicateLines: 0, testCoverage: 0
-            },
-            recommendations: server.recommendations || [],
-            codeSmells: server.codeSmells || 0,
-            technicalDebt: server.technicalDebt || 'n/a',
-          };
-          setAnalysis(newAnalysis);
-          setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
-
-        }
-
-        setWasAutoFixed(true);
+        const reResult = await analyzeCodeWithAI(fixedCode);
+        const reAnalysis: AppAnalysis = { ...reResult };
+        setAnalysis(reAnalysis);
+        setAnalysisHistory(prev => [reAnalysis, ...prev.slice(0, 9)]);
         setAutoFixMessage('✓ Code auto-fixed and re-analyzed successfully!');
         setTimeout(() => setAutoFixMessage(null), 5000);
       } catch (analyzeErr) {
@@ -564,7 +309,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       }
 
     } catch (error) {
-      console.error('Auto fix error:', error);
       const msg = error instanceof Error ? error.message : 'Unknown error';
       alert(`Auto Fix failed: ${msg}`);
     } finally {
@@ -797,6 +541,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                   setCode={setCode}
                   targetLine={targetLine}
                   onLineNavigated={() => setTargetLine(null)}
+                  issues={analysis?.issues}
                 />
               ) : (
                 <DiffViewer original={originalCode || ''} modified={code} />

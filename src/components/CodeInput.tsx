@@ -1,5 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, FileText, Link, Play, Loader2, Folder, X, File, CheckCircle } from 'lucide-react';
+
+// Minimal issue shape needed for highlighting
+interface IssueMarker {
+  line?: number;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  category?: string;
+  message: string;
+  suggestion?: string;
+  fixedCode?: string;
+}
 
 interface CodeInputProps {
   onAnalyze: (code: string) => void;
@@ -8,6 +18,7 @@ interface CodeInputProps {
   setCode: (code: string) => void;
   targetLine?: number | null;
   onLineNavigated?: () => void;
+  issues?: IssueMarker[];
 }
 
 interface UploadedFile {
@@ -17,279 +28,174 @@ interface UploadedFile {
   type: string;
 }
 
+interface TooltipInfo {
+  issues: IssueMarker[];
+  x: number;
+  y: number;
+}
+
+const SEVERITY_COLORS: Record<string, { dot: string; bg: string; border: string; text: string }> = {
+  critical: { dot: 'bg-red-500',    bg: 'rgba(239,68,68,0.12)',   border: '#ef4444', text: 'text-red-400'   },
+  high:     { dot: 'bg-orange-500', bg: 'rgba(249,115,22,0.12)',  border: '#f97316', text: 'text-orange-400' },
+  medium:   { dot: 'bg-yellow-400', bg: 'rgba(234,179,8,0.12)',   border: '#eab308', text: 'text-yellow-400' },
+  low:      { dot: 'bg-blue-400',   bg: 'rgba(96,165,250,0.12)',  border: '#60a5fa', text: 'text-blue-400'   },
+};
+
+function worstSeverity(issues: IssueMarker[]): string {
+  const order = ['critical', 'high', 'medium', 'low'];
+  for (const s of order) {
+    if (issues.some(i => i.severity === s)) return s;
+  }
+  return 'low';
+}
+
 export const CodeInput: React.FC<CodeInputProps> = (props) => {
-  const { code, setCode, isAnalyzing, onAnalyze, targetLine, onLineNavigated } = props;
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const { code, setCode, isAnalyzing, onAnalyze, targetLine, onLineNavigated, issues = [] } = props;
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
   const [inputMethod, setInputMethod] = useState<'paste' | 'upload' | 'folder' | 'github'>('paste');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [tooltipInfo, setTooltipInfo] = useState<TooltipInfo | null>(null);
+  const [selectedIssueLine, setSelectedIssueLine] = useState<number | null>(null);
 
   const codeExtensions = ['.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.cpp', '.c', '.php', '.rb', '.go', '.rs', '.html', '.css', '.scss', '.vue', '.svelte', '.json', '.xml', '.yaml', '.yml', '.md', '.txt'];
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (files) {
-      processFiles(Array.from(files));
-    }
-  };
-
-  const handleFolderUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (files) {
-      processFiles(Array.from(files));
-    }
-  };
-
-  const processFiles = async (files: File[]) => {
-    console.log('Starting optimized file processing...', files.length, 'files');
-
-    setIsUploading(true);
-    setUploadProgress(0);
-
-    // Filter files more efficiently
-    const codeFiles = files.filter(file => {
-      const fileName = file.name.toLowerCase();
-      const hasValidExtension = codeExtensions.some(ext => fileName.endsWith(ext));
-      const hasTextType = file.type.startsWith('text/') || file.type === '' || file.type === 'application/javascript';
-      const isSmallEnough = file.size < 1024 * 1024; // 1MB limit per file
-      return (hasValidExtension || hasTextType) && isSmallEnough;
-    });
-
-    console.log('Filtered code files:', codeFiles.length);
-
-    if (codeFiles.length === 0) {
-      alert('No valid code files found. Please select files with supported extensions (under 1MB each).');
-      setIsUploading(false);
-      setUploadProgress(0);
-      return;
-    }
-
-    // Limit number of files to prevent performance issues
-    const limitedFiles = codeFiles.slice(0, 20);
-    if (limitedFiles.length < codeFiles.length) {
-      console.warn(`Processing only first ${limitedFiles.length} files for performance`);
-    }
-
-    try {
-      const processedFiles: UploadedFile[] = [];
-      let combinedCode = '';
-
-      // Process files in batches for better performance
-      const batchSize = 5;
-      for (let i = 0; i < limitedFiles.length; i += batchSize) {
-        const batch = limitedFiles.slice(i, i + batchSize);
-
-        const batchPromises = batch.map(file => {
-          return new Promise<UploadedFile | null>((resolve) => {
-            const reader = new FileReader();
-
-            reader.onload = (e) => {
-              try {
-                const content = e.target?.result as string;
-                if (content && content.length < 100000) { // 100KB limit per file content
-                  resolve({
-                    name: file.name,
-                    content: content,
-                    size: file.size,
-                    type: file.type || 'text/plain'
-                  });
-                } else {
-                  console.warn(`File too large or empty: ${file.name}`);
-                  resolve(null);
-                }
-              } catch (error) {
-                console.error(`Error processing file ${file.name}:`, error);
-                resolve(null);
-              }
-            };
-
-            reader.onerror = () => {
-              console.error(`Failed to read file: ${file.name}`);
-              resolve(null);
-            };
-
-            reader.readAsText(file);
-          });
-        });
-
-        const batchResults = await Promise.all(batchPromises);
-
-        batchResults.forEach(result => {
-          if (result) {
-            processedFiles.push(result);
-            combinedCode += `\n\n// ==========================================\n// File: ${result.name}\n// ==========================================\n${result.content}`;
-          }
-        });
-
-        // Update progress
-        const progress = Math.round(((i + batch.length) / limitedFiles.length) * 100);
-        setUploadProgress(progress);
-
-        // Small delay to prevent UI blocking
-        await new Promise(resolve => setTimeout(resolve, 50));
+  // Build a map of line number -> issues for O(1) lookup
+  const issuesByLine = React.useMemo(() => {
+    const map: Record<number, IssueMarker[]> = {};
+    for (const issue of issues) {
+      if (issue.line && issue.line > 0) {
+        (map[issue.line] ??= []).push(issue);
       }
-
-      console.log('All files processed successfully');
-      setUploadedFiles(processedFiles);
-      setCode(combinedCode.trim());
-      setUploadProgress(100);
-
-      // Warn if combined code is getting large (approaching 60KB backend limit)
-      const sizeKb = (combinedCode.length / 1024).toFixed(1);
-      if (combinedCode.length > 50 * 1024) {
-        console.warn(`⚠️ Combined code size is ${sizeKb}KB (approaching 60KB backend limit). Consider analyzing fewer files.`);
-      }
-
-      // Reset upload state
-      setTimeout(() => {
-        setIsUploading(false);
-        setUploadProgress(0);
-      }, 1000);
-
-    } catch (error) {
-      console.error('Error during file processing:', error);
-      alert('An error occurred while processing files. Please try again.');
-      setIsUploading(false);
-      setUploadProgress(0);
     }
+    return map;
+  }, [issues]);
+
+  // Sync gutter + overlay scroll with textarea scroll
+  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    const scrollTop = e.currentTarget.scrollTop;
+    if (gutterRef.current) gutterRef.current.scrollTop = scrollTop;
+    if (overlayRef.current) overlayRef.current.scrollTop = scrollTop;
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-
-    const files = Array.from(e.dataTransfer.files);
-    processFiles(files);
-  };
-
-  const removeFile = (index: number) => {
-    const newFiles = uploadedFiles.filter((_, i) => i !== index);
-    setUploadedFiles(newFiles);
-
-    if (newFiles.length === 0) {
-      setCode('');
-    } else {
-      const combinedCode = newFiles.map(file =>
-        `\n\n// ==========================================\n// File: ${file.name}\n// ==========================================\n${file.content}`
-      ).join('');
-      setCode(combinedCode.trim());
-    }
-  };
-
-  const clearAllFiles = () => {
-    setUploadedFiles([]);
-    setCode('');
-    setUploadProgress(0);
-    setIsUploading(false);
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const sampleCode = `/**
- * Sample JavaScript function for demonstration
- * This function fetches user data and their posts
- * @param {string} userId - The ID of the user to fetch
- * @returns {Promise<Object>} User data with posts
- */
-async function fetchUserData(userId) {
-  try {
-    // Fetch user and posts concurrently for better performance
-    const [userResponse, postsResponse] = await Promise.all([
-      fetch(\`/api/users/\${userId}\`),
-      fetch(\`/api/users/\${userId}/posts\`)
-    ]);
-    
-    if (!userResponse.ok || !postsResponse.ok) {
-      throw new Error('Failed to fetch user data');
-    }
-    
-    const userData = await userResponse.json();
-    const posts = await postsResponse.json();
-    
-    return {
-      user: userData,
-      posts: posts
-    };
-  } catch (error) {
-    console.error('Error fetching user data:', error);
-    throw error;
-  }
-}
-
-/**
- * Process user data based on age restrictions
- * @param {Object} data - User data object
- * @returns {Array} Filtered posts array
- */
-function processUserData(data) {
-  // Check if user is adult
-  if (data.user.age >= 18) {
-    // Return only published posts for adults
-    return data.posts.filter(post => post.published === true);
-  }
-  
-  // Return empty array for minors
-  return [];
-}`;
-
-  // Handle line navigation
-  React.useEffect(() => {
+  // Navigate to target line
+  useEffect(() => {
     if (targetLine && textareaRef.current) {
       const el = textareaRef.current;
       const lines = code.split('\n');
       const lineIndex = Math.max(0, targetLine - 1);
-
-      // Calculate scroll position (rough estimate)
-      const lineHeight = 20; // approximate line height in px
-      const targetScroll = lineIndex * lineHeight;
-
-      el.scrollTo({
-        top: targetScroll,
-        behavior: 'smooth'
-      });
-
-      // Brief highlight effect
+      el.scrollTo({ top: lineIndex * LINE_H, behavior: 'smooth' });
       el.focus();
-
-      // Set cursor to the start of that line
       let charPos = 0;
-      for (let i = 0; i < lineIndex && i < lines.length; i++) {
-        charPos += lines[i].length + 1;
-      }
-
-      const lineLength = lines[lineIndex]?.length || 0;
-      el.setSelectionRange(charPos, charPos + lineLength);
-
-      // Reset target after a delay to allow for multiple clicks on the same line
-      setTimeout(() => {
-        onLineNavigated?.();
-      }, 500);
+      for (let i = 0; i < lineIndex && i < lines.length; i++) charPos += lines[i].length + 1;
+      el.setSelectionRange(charPos, charPos + (lines[lineIndex]?.length || 0));
+      setTimeout(() => onLineNavigated?.(), 500);
     }
   }, [targetLine, code, onLineNavigated]);
 
-  const lineCount = code.split('\n').length;
-  const lineNumbers = Array.from({ length: Math.max(1, lineCount) }, (_, i) => i + 1).join('\n');
+  const lineCount = Math.max(1, code.split('\n').length);
+  const LINE_H = 20; // px — must match leading-[20px] in textarea
+  const PAD_TOP = 16; // px — must match pt-4
+
+  // File processing helpers
+  const processFiles = async (files: File[]) => {
+    setIsUploading(true);
+    setUploadProgress(0);
+    const codeFiles = files.filter(f => {
+      const name = f.name.toLowerCase();
+      return codeExtensions.some(ext => name.endsWith(ext)) && f.size < 1024 * 1024;
+    }).slice(0, 20);
+
+    if (!codeFiles.length) {
+      alert('No valid code files found.');
+      setIsUploading(false);
+      return;
+    }
+
+    const processed: UploadedFile[] = [];
+    let combined = '';
+    const batchSize = 5;
+
+    for (let i = 0; i < codeFiles.length; i += batchSize) {
+      const batch = codeFiles.slice(i, i + batchSize);
+      const results = await Promise.all(batch.map(f => new Promise<UploadedFile | null>(resolve => {
+        const reader = new FileReader();
+        reader.onload = e => {
+          const content = e.target?.result as string;
+          resolve(content && content.length < 100000 ? { name: f.name, content, size: f.size, type: f.type } : null);
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsText(f);
+      })));
+
+      results.forEach(r => {
+        if (r) {
+          processed.push(r);
+          combined += `\n\n// ==========================================\n// File: ${r.name}\n// ==========================================\n${r.content}`;
+        }
+      });
+
+      setUploadProgress(Math.round(((i + batch.length) / codeFiles.length) * 100));
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    setUploadedFiles(processed);
+    setCode(combined.trim());
+    setTimeout(() => { setIsUploading(false); setUploadProgress(0); }, 1000);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) processFiles(Array.from(e.target.files));
+  };
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); };
+  const handleDrop = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); processFiles(Array.from(e.dataTransfer.files)); };
+
+  const removeFile = (idx: number) => {
+    const next = uploadedFiles.filter((_, i) => i !== idx);
+    setUploadedFiles(next);
+    setCode(next.length ? next.map(f => `\n\n// ==========================================\n// File: ${f.name}\n// ==========================================\n${f.content}`).join('').trim() : '');
+  };
+
+  const formatFileSize = (b: number) => {
+    const k = 1024, s = ['Bytes', 'KB', 'MB'];
+    const i = Math.floor(Math.log(b) / Math.log(k));
+    return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + s[i];
+  };
+
+  const sampleCode = `/**
+ * Sample JavaScript function for demonstration
+ */
+async function fetchUserData(userId) {
+  try {
+    const [userResponse, postsResponse] = await Promise.all([
+      fetch(\`/api/users/\${userId}\`),
+      fetch(\`/api/users/\${userId}/posts\`)
+    ]);
+    if (!userResponse.ok || !postsResponse.ok) {
+      throw new Error('Failed to fetch user data');
+    }
+    const userData = await userResponse.json();
+    const posts = await postsResponse.json();
+    return { user: userData, posts };
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    throw error;
+  }
+}`;
+
+  // Selected issue details (shown in the inline panel)
+  const selectedIssues = selectedIssueLine ? (issuesByLine[selectedIssueLine] || []) : null;
 
   return (
     <div className="bg-gray-800 text-white rounded-lg p-6">
+      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-white">Code Input</h2>
         <div className="flex space-x-1">
@@ -299,120 +205,236 @@ function processUserData(data) {
               onClick={() => setInputMethod(method)}
               className={`px-3 py-1 text-xs rounded-md transition-colors ${inputMethod === method ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             >
-              {method === 'paste' && <FileText className="w-3 h-3 inline mr-1" />}
-              {method === 'upload' && <Upload className="w-3 h-3 inline mr-1" />}
-              {method === 'folder' && <Folder className="w-3 h-3 inline mr-1" />}
-              {method === 'github' && <Link className="w-3 h-3 inline mr-1" />}
+              {method === 'paste'  && <FileText className="w-3 h-3 inline mr-1" />}
+              {method === 'upload' && <Upload   className="w-3 h-3 inline mr-1" />}
+              {method === 'folder' && <Folder   className="w-3 h-3 inline mr-1" />}
+              {method === 'github' && <Link     className="w-3 h-3 inline mr-1" />}
               {method.charAt(0).toUpperCase() + method.slice(1)}
             </button>
           ))}
         </div>
       </div>
 
+      {/* ------------------------------------------------------------------ */}
+      {/* PASTE mode — editor with issue highlighting                         */}
+      {/* ------------------------------------------------------------------ */}
       {inputMethod === 'paste' && (
-        <div className="space-y-4">
-          <div className="relative flex bg-gray-900 border border-gray-700 rounded-lg overflow-hidden h-96 group">
-            {/* Extended Line Numbers Gutter */}
+        <div className="space-y-0">
+          {/* Tooltip (fixed-positioned, outside scroll containers) */}
+          {tooltipInfo && (
             <div
-              className="w-12 bg-gray-900/50 border-r border-gray-700/50 p-4 pt-4 text-right select-none font-mono text-sm text-gray-500 overflow-hidden"
-              style={{ pointerEvents: 'none' }}
+              className="fixed z-50 max-w-xs bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 text-xs pointer-events-none"
+              style={{ left: tooltipInfo.x, top: tooltipInfo.y, transform: 'translateY(-50%)' }}
             >
-              <pre className="m-0 leading-[20px]">{lineNumbers}</pre>
+              {tooltipInfo.issues.map((issue, i) => {
+                const colors = SEVERITY_COLORS[issue.severity] || SEVERITY_COLORS.low;
+                return (
+                  <div key={i} className={i > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}>
+                    <div className="flex items-center gap-1 mb-1">
+                      <span className={`${colors.text} font-bold uppercase`}>{issue.severity}</span>
+                      {issue.category && <span className="text-gray-500">· {issue.category}</span>}
+                    </div>
+                    <p className="text-gray-200 leading-snug">{issue.message}</p>
+                    {issue.suggestion && (
+                      <p className="text-gray-400 mt-1 leading-snug">
+                        <span className="text-green-400 font-semibold">Fix: </span>{issue.suggestion}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Editor container */}
+          <div className="relative flex bg-gray-900 border border-gray-700 rounded-lg overflow-hidden h-96 group">
+
+            {/* Line-highlight overlay — sits between gutter and textarea */}
+            <div
+              ref={overlayRef}
+              className="absolute pointer-events-none overflow-hidden"
+              style={{ left: 48, right: 0, top: 0, bottom: 0 }}
+            >
+              {Object.entries(issuesByLine).map(([lineStr, lineIssues]) => {
+                const lineNum = Number(lineStr);
+                const worst = worstSeverity(lineIssues);
+                const colors = SEVERITY_COLORS[worst];
+                return (
+                  <div
+                    key={lineNum}
+                    className="absolute w-full"
+                    style={{
+                      top: (lineNum - 1) * LINE_H + PAD_TOP,
+                      height: LINE_H,
+                      backgroundColor: colors.bg,
+                      borderLeft: `2px solid ${colors.border}`,
+                    }}
+                  />
+                );
+              })}
             </div>
 
+            {/* Gutter with per-line issue markers */}
+            <div
+              ref={gutterRef}
+              className="w-12 bg-gray-900/60 border-r border-gray-700/50 overflow-hidden flex-shrink-0 select-none"
+              style={{ paddingTop: PAD_TOP }}
+            >
+              {Array.from({ length: lineCount }, (_, i) => {
+                const lineNum = i + 1;
+                const lineIssues = issuesByLine[lineNum];
+                const isSelected = selectedIssueLine === lineNum;
+
+                if (!lineIssues) {
+                  return (
+                    <div
+                      key={lineNum}
+                      className="flex items-center justify-end pr-2 font-mono text-xs text-gray-600"
+                      style={{ height: LINE_H }}
+                    >
+                      {lineNum}
+                    </div>
+                  );
+                }
+
+                const worst = worstSeverity(lineIssues);
+                const colors = SEVERITY_COLORS[worst];
+
+                return (
+                  <div
+                    key={lineNum}
+                    className="relative flex items-center justify-end pr-2 font-mono text-xs cursor-pointer"
+                    style={{ height: LINE_H, backgroundColor: isSelected ? colors.bg : 'transparent' }}
+                    onClick={() => setSelectedIssueLine(isSelected ? null : lineNum)}
+                    onMouseEnter={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setTooltipInfo({ issues: lineIssues, x: rect.right + 10, y: rect.top + rect.height / 2 });
+                    }}
+                    onMouseLeave={() => setTooltipInfo(null)}
+                  >
+                    {/* Severity dot */}
+                    <span
+                      className={`absolute left-1.5 w-2 h-2 rounded-full ${colors.dot} flex-shrink-0`}
+                      style={{ top: '50%', transform: 'translateY(-50%)' }}
+                    />
+                    <span className={`${colors.text} font-semibold`}>{lineNum}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Code textarea */}
             <textarea
               ref={textareaRef}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="Paste your code here..."
-              className="flex-1 h-full p-4 pt-4 bg-transparent text-white font-mono text-sm resize-none focus:outline-none focus:ring-0 leading-[20px] overflow-y-auto custom-scrollbar whitespace-pre"
+              className="flex-1 h-full bg-transparent text-white font-mono text-sm resize-none focus:outline-none leading-[20px] overflow-y-auto whitespace-pre"
+              style={{ padding: `${PAD_TOP}px 16px`, caretColor: 'white' }}
               spellCheck={false}
-              onScroll={(e) => {
-                // Sync gutter scroll
-                const gutter = e.currentTarget.parentElement?.firstChild as HTMLElement;
-                if (gutter) gutter.scrollTop = e.currentTarget.scrollTop;
-              }}
+              onScroll={handleScroll}
             />
           </div>
-          <button
-            onClick={() => setCode(sampleCode)}
-            className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
-          >
-            Load sample code with documentation
-          </button>
+
+          {/* Inline issue detail panel */}
+          {selectedIssues && selectedIssues.length > 0 && (
+            <div className="mt-1 rounded-lg border border-gray-700 bg-gray-900 divide-y divide-gray-800">
+              {selectedIssues.map((issue, i) => {
+                const colors = SEVERITY_COLORS[issue.severity] || SEVERITY_COLORS.low;
+                return (
+                  <div key={i} className="p-3 text-xs">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`${colors.dot} w-2 h-2 rounded-full inline-block`} />
+                        <span className={`${colors.text} font-bold uppercase tracking-wide`}>{issue.severity}</span>
+                        {issue.category && <span className="text-gray-500">{issue.category}</span>}
+                        <span className="text-gray-500">Line {selectedIssueLine}</span>
+                      </div>
+                      <button onClick={() => setSelectedIssueLine(null)} className="text-gray-600 hover:text-gray-400">✕</button>
+                    </div>
+                    <p className="text-gray-200 mb-1">{issue.message}</p>
+                    {issue.suggestion && (
+                      <p className="text-gray-400">
+                        <span className="text-green-400 font-semibold">Suggestion: </span>{issue.suggestion}
+                      </p>
+                    )}
+                    {issue.fixedCode && issue.fixedCode.trim() && !issue.fixedCode.includes('needs manual review') && (
+                      <div className="mt-2 bg-gray-800 rounded px-2 py-1 font-mono text-green-300 break-all">
+                        <span className="text-gray-500 mr-1">Fixed:</span>{issue.fixedCode}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Issue count badge + sample code link */}
+          <div className="flex items-center justify-between mt-2">
+            {issues.length > 0 ? (
+              <div className="flex items-center gap-2 text-xs">
+                {(['critical', 'high', 'medium', 'low'] as const).map(sev => {
+                  const count = issues.filter(i => i.severity === sev).length;
+                  if (!count) return null;
+                  return (
+                    <span key={sev} className={`${SEVERITY_COLORS[sev].dot} px-2 py-0.5 rounded-full text-white font-medium`}>
+                      {count} {sev}
+                    </span>
+                  );
+                })}
+                <span className="text-gray-500">— click a highlighted line number for details</span>
+              </div>
+            ) : (
+              <button onClick={() => setCode(sampleCode)} className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                Load sample code
+              </button>
+            )}
+          </div>
         </div>
       )}
 
+      {/* ------------------------------------------------------------------ */}
+      {/* UPLOAD mode                                                         */}
+      {/* ------------------------------------------------------------------ */}
       {inputMethod === 'upload' && (
         <div className="space-y-4">
           <div
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragOver
-              ? 'border-blue-500 bg-blue-500/10'
-              : 'border-gray-600 hover:border-gray-500'
-              }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-gray-600 hover:border-gray-500'}`}
+            onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
           >
             <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-            <p className="text-gray-400 mb-2">Drop your code files here or click to browse</p>
-            <p className="text-xs text-gray-500 mb-4">Supports: JS, TS, Python, Java, C++, and more (max 1MB per file)</p>
-            <input
-              type="file"
-              accept={codeExtensions.join(',')}
-              onChange={handleFileUpload}
-              multiple
-              className="hidden"
-              id="file-upload"
-            />
-            <label
-              htmlFor="file-upload"
-              className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer transition-colors"
-            >
+            <p className="text-gray-400 mb-2">Drop code files here or click to browse</p>
+            <p className="text-xs text-gray-500 mb-4">Supports JS, TS, Python, Java, C++ and more (max 1 MB per file)</p>
+            <input type="file" accept={codeExtensions.join(',')} onChange={handleFileUpload} multiple className="hidden" id="file-upload" />
+            <label htmlFor="file-upload" className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer transition-colors">
               Choose Files
             </label>
           </div>
-
           {isUploading && (
             <div className="bg-gray-900 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-300">Processing files...</span>
-                <span className="text-sm text-gray-400">{Math.round(uploadProgress)}%</span>
+              <div className="flex justify-between mb-2 text-sm text-gray-300">
+                <span>Processing files...</span><span>{uploadProgress}%</span>
               </div>
               <div className="w-full bg-gray-700 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                ></div>
+                <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${uploadProgress}%` }} />
               </div>
             </div>
           )}
-
           {uploadedFiles.length > 0 && !isUploading && (
             <div className="bg-gray-900 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex justify-between mb-3">
                 <h3 className="text-sm font-medium text-white">Uploaded Files ({uploadedFiles.length})</h3>
-                <button
-                  onClick={clearAllFiles}
-                  className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                >
-                  Clear All
-                </button>
+                <button onClick={() => { setUploadedFiles([]); setCode(''); }} className="text-xs text-red-400 hover:text-red-300">Clear All</button>
               </div>
               <div className="space-y-2 max-h-32 overflow-y-auto">
-                {uploadedFiles.map((file, index) => (
-                  <div key={index} className="flex items-center justify-between bg-gray-800 p-2 rounded">
+                {uploadedFiles.map((f, i) => (
+                  <div key={i} className="flex items-center justify-between bg-gray-800 p-2 rounded">
                     <div className="flex items-center space-x-2">
                       <File className="w-4 h-4 text-blue-400" />
-                      <span className="text-sm text-gray-300 truncate">{file.name}</span>
-                      <span className="text-xs text-gray-500">({formatFileSize(file.size)})</span>
+                      <span className="text-sm text-gray-300 truncate">{f.name}</span>
+                      <span className="text-xs text-gray-500">({formatFileSize(f.size)})</span>
                     </div>
-                    <button
-                      onClick={() => removeFile(index)}
-                      className="text-gray-400 hover:text-red-400 transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    <button onClick={() => removeFile(i)} className="text-gray-400 hover:text-red-400"><X className="w-4 h-4" /></button>
                   </div>
                 ))}
               </div>
@@ -421,76 +443,52 @@ function processUserData(data) {
         </div>
       )}
 
+      {/* ------------------------------------------------------------------ */}
+      {/* FOLDER mode                                                         */}
+      {/* ------------------------------------------------------------------ */}
       {inputMethod === 'folder' && (
         <div className="space-y-4">
           <div
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragOver
-              ? 'border-blue-500 bg-blue-500/10'
-              : 'border-gray-600 hover:border-gray-500'
-              }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${isDragOver ? 'border-blue-500 bg-blue-500/10' : 'border-gray-600 hover:border-gray-500'}`}
+            onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
           >
             <Folder className="w-8 h-8 text-gray-400 mx-auto mb-2" />
             <p className="text-gray-400 mb-2">Select a folder containing your code files</p>
-            <p className="text-xs text-gray-500 mb-4">Processes up to 20 files (max 1MB each) for optimal performance</p>
+            <p className="text-xs text-gray-500 mb-4">Processes up to 20 files (max 1 MB each)</p>
             <input
               type="file"
-              {...{ webkitdirectory: "true", mozdirectory: "true" } as React.InputHTMLAttributes<HTMLInputElement>}
-              multiple
-              onChange={handleFolderUpload}
-              className="hidden"
-              id="folder-upload"
+              {...{ webkitdirectory: 'true', mozdirectory: 'true' } as React.InputHTMLAttributes<HTMLInputElement>}
+              multiple onChange={handleFileUpload} className="hidden" id="folder-upload"
             />
-            <label
-              htmlFor="folder-upload"
-              className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer transition-colors"
-            >
+            <label htmlFor="folder-upload" className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer transition-colors">
               Choose Folder
             </label>
           </div>
-
           {isUploading && (
             <div className="bg-gray-900 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-300">Processing folder...</span>
-                <span className="text-sm text-gray-400">{Math.round(uploadProgress)}%</span>
+              <div className="flex justify-between mb-2 text-sm text-gray-300">
+                <span>Processing folder...</span><span>{uploadProgress}%</span>
               </div>
               <div className="w-full bg-gray-700 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                ></div>
+                <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${uploadProgress}%` }} />
               </div>
             </div>
           )}
-
           {uploadedFiles.length > 0 && !isUploading && (
             <div className="bg-gray-900 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex justify-between mb-3">
                 <h3 className="text-sm font-medium text-white">Folder Contents ({uploadedFiles.length} files)</h3>
-                <button
-                  onClick={clearAllFiles}
-                  className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                >
-                  Clear All
-                </button>
+                <button onClick={() => { setUploadedFiles([]); setCode(''); }} className="text-xs text-red-400 hover:text-red-300">Clear All</button>
               </div>
               <div className="space-y-2 max-h-32 overflow-y-auto">
-                {uploadedFiles.map((file, index) => (
-                  <div key={index} className="flex items-center justify-between bg-gray-800 p-2 rounded">
+                {uploadedFiles.map((f, i) => (
+                  <div key={i} className="flex items-center justify-between bg-gray-800 p-2 rounded">
                     <div className="flex items-center space-x-2">
                       <File className="w-4 h-4 text-green-400" />
-                      <span className="text-sm text-gray-300 truncate">{file.name}</span>
-                      <span className="text-xs text-gray-500">({formatFileSize(file.size)})</span>
+                      <span className="text-sm text-gray-300 truncate">{f.name}</span>
+                      <span className="text-xs text-gray-500">({formatFileSize(f.size)})</span>
                     </div>
-                    <button
-                      onClick={() => removeFile(index)}
-                      className="text-gray-400 hover:text-red-400 transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    <button onClick={() => removeFile(i)} className="text-gray-400 hover:text-red-400"><X className="w-4 h-4" /></button>
                   </div>
                 ))}
               </div>
@@ -499,6 +497,9 @@ function processUserData(data) {
         </div>
       )}
 
+      {/* ------------------------------------------------------------------ */}
+      {/* GITHUB mode                                                         */}
+      {/* ------------------------------------------------------------------ */}
       {inputMethod === 'github' && (
         <div className="space-y-4">
           <input
@@ -506,21 +507,20 @@ function processUserData(data) {
             placeholder="Enter GitHub repository URL or file URL..."
             className="w-full p-3 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-          <p className="text-sm text-gray-400">
-            Example: https://github.com/user/repo/blob/main/src/index.js
-          </p>
+          <p className="text-sm text-gray-400">Example: https://github.com/user/repo/blob/main/src/index.js</p>
         </div>
       )}
 
+      {/* ------------------------------------------------------------------ */}
+      {/* Analyze button + character count                                    */}
+      {/* ------------------------------------------------------------------ */}
       <div className="mt-6 flex items-center justify-between">
         <div className="text-sm text-gray-400">
           {code ? (
             <div className="flex items-center space-x-2">
               <CheckCircle className="w-4 h-4 text-green-400" />
               <span>{code.length.toLocaleString()} characters ready</span>
-              {uploadedFiles.length > 0 && (
-                <span className="text-gray-500">• {uploadedFiles.length} files</span>
-              )}
+              {uploadedFiles.length > 0 && <span className="text-gray-500">· {uploadedFiles.length} files</span>}
             </div>
           ) : (
             'No code provided'
@@ -531,11 +531,7 @@ function processUserData(data) {
           disabled={!code || isAnalyzing || isUploading}
           className="flex items-center space-x-2 px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 shadow-lg"
         >
-          {isAnalyzing ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
-            <Play className="w-5 h-5" />
-          )}
+          {isAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
           <span className="font-medium">
             {isAnalyzing ? 'Analyzing...' : isUploading ? 'Processing...' : 'Analyze Code'}
           </span>
