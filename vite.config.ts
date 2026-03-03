@@ -117,24 +117,16 @@ export default defineConfig({
               const { to, toName, subject, html } = body as Record<string, string>;
               if (!to || !html) { sendJSON(res, 400, { error: 'Missing to or html' }); return; }
 
-              const env = readFunctionsEnv();
-              const emailUser = (env.EMAIL_USER || 'muliimaculate@gmail.com').trim();
-              const emailPass = (env.EMAIL_APP_PASS || '').trim();
-
-              if (!emailPass) {
-                sendJSON(res, 500, {
-                  error: 'EMAIL_APP_PASS not set in functions/.env — add your Gmail App Password to enable sending.',
-                });
-                return;
-              }
+              const GMAIL_USER = 'muliimaculate@gmail.com';
+              const GMAIL_PASS = 'yajaeijnwxbstnsw';
 
               const transporter = nodemailer.createTransport({
                 service: 'gmail',
-                auth: { user: emailUser, pass: emailPass },
+                auth: { user: GMAIL_USER, pass: GMAIL_PASS },
               });
 
               await transporter.sendMail({
-                from: `"AI Code Intelligence" <${emailUser}>`,
+                from: `"AI Code Intelligence" <${GMAIL_USER}>`,
                 to: toName ? `"${toName}" <${to}>` : to,
                 subject: subject || 'Code Analysis Report',
                 html,
