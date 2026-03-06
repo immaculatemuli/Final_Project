@@ -4,9 +4,12 @@ import { auth, db } from '../firebase';
 import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc, limit } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Cpu, History, Bookmark, Copy, ArrowLeftRight, GitBranch, Code2, ChevronRight, LogOut, User as UserIcon } from 'lucide-react';
+import ExplanationPanel from './ExplanationPanel';
+import { Cpu, History, Bookmark, Copy, ArrowLeftRight, GitBranch, Code2, ChevronRight, LogOut, User as UserIcon, MessageSquare, X } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
-import { analyzeCodeWithAI, fixCodeWithAI } from '../services/aiAnalysis';
+import ChatPanel from './ChatPanel';
+import { analyzeCodeWithAI, fixCodeWithAI, chatWithAI } from '../services/aiAnalysis';
+import type { ChatMessage } from '../services/aiAnalysis';
 
 interface HomePageProps { user: User; }
 
@@ -88,6 +91,9 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const [viewMode, setViewMode] = useState<'editor' | 'diff'>('editor');
   const isRemoteUpdate = useRef(false);
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [isChatting, setIsChatting] = useState(false);
 
   // Handle restored analysis from history
   useEffect(() => {
@@ -268,6 +274,22 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       });
     } catch (error) {
       console.error('Failed to flag issue:', error);
+    }
+  };
+
+  const handleChat = async (userMessage: string) => {
+    if (!userMessage.trim() || isChatting) return;
+    const userMsg: ChatMessage = { role: 'user', content: userMessage };
+    setChatMessages(prev => [...prev, userMsg]);
+    setIsChatting(true);
+    try {
+      const reply = await chatWithAI(code, analysis as any, chatMessages, userMessage);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `Sorry, I hit an error: ${msg}` }]);
+    } finally {
+      setIsChatting(false);
     }
   };
 
@@ -630,8 +652,8 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           </div>
         </section>
 
-        {/* ── Right: Review Panel ─────────────────────── */}
-        <section className="w-full md:w-[420px] lg:w-[460px] flex-shrink-0">
+        {/* ── Right: Analysis panel ────────────────────── */}
+        <section className="w-full md:w-[420px] lg:w-[460px] flex-shrink-0 flex flex-col gap-3">
           <ReviewPanel
             analysis={analysis}
             isAnalyzing={isAnalyzing}
@@ -646,6 +668,45 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           />
         </section>
       </main>
+
+      {/* ── Floating Chat Widget ──────────────────────── */}
+
+      {/* Chat panel */}
+      {isChatOpen && (
+        <div
+          className="fixed bottom-24 right-6 z-50 w-[360px] shadow-2xl"
+          style={{ filter: 'drop-shadow(0 24px 48px rgba(0,0,0,0.6))' }}
+        >
+          <ChatPanel
+            messages={chatMessages}
+            isChatting={isChatting}
+            hasCode={!!code.trim()}
+            onSend={handleChat}
+          />
+        </div>
+      )}
+
+      {/* Chat toggle button */}
+      <button
+        onClick={() => setIsChatOpen(prev => !prev)}
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95"
+        style={{
+          background: isChatOpen
+            ? 'rgba(30,30,50,0.95)'
+            : 'linear-gradient(135deg, #ec4899, #f97316)',
+          border: isChatOpen ? '1px solid rgba(255,255,255,0.12)' : 'none',
+          boxShadow: isChatOpen
+            ? '0 8px 32px rgba(0,0,0,0.5)'
+            : '0 8px 32px rgba(236,72,153,0.4)',
+        }}
+        title={isChatOpen ? 'Close chat' : 'AI Code Chat'}
+      >
+        {isChatOpen
+          ? <X className="w-5 h-5 text-white" />
+          : <MessageSquare className="w-5 h-5 text-white" />
+        }
+      </button>
+
     </div>
   );
 };

@@ -238,6 +238,140 @@ ${numbered}
 }
 
 // --------------------------------------------------------------------------
+// explainCodeWithAI
+// --------------------------------------------------------------------------
+export interface CodeExplanation {
+  language: string;
+  purpose: string;
+  overview: string;
+  complexity: 'Simple' | 'Moderate' | 'Complex';
+  sections: Array<{ title: string; lines: string; explanation: string }>;
+  inputs: string[];
+  outputs: string;
+  dependencies: string[];
+  audience: string;
+  keyPoints: string[];
+}
+
+export async function explainCodeWithAI(code: string): Promise<CodeExplanation> {
+  const numbered = code
+    .split('\n')
+    .map((line, i) => `${String(i + 1).padStart(4)}: ${line}`)
+    .join('\n');
+
+  const prompt = `You are an expert software engineer and technical writer. Explain the following code in clear, plain English so that it can be understood by a junior developer or non-technical stakeholder.
+
+Return ONLY a valid JSON object matching this exact schema — no markdown, no extra text:
+{
+  "language": "<detected programming language>",
+  "purpose": "<one clear sentence: what does this code do overall?>",
+  "overview": "<2-3 sentence paragraph giving a high-level explanation of the code's logic and flow>",
+  "complexity": "Simple" | "Moderate" | "Complex",
+  "sections": [
+    {
+      "title": "<short name for this logical section>",
+      "lines": "<e.g. '1-5' or '12-20'>",
+      "explanation": "<plain English explanation of what this block does and why>"
+    }
+  ],
+  "inputs": ["<param or input: description>"],
+  "outputs": "<what does the code return, emit, or produce? Be specific>",
+  "dependencies": ["<library or framework name>"],
+  "audience": "<who would typically write or use this code? e.g. 'Backend developers working with REST APIs'>",
+  "keyPoints": [
+    "<important thing to know about this code>",
+    "<another key insight, gotcha, or notable pattern>"
+  ]
+}
+
+Code to explain (line numbers prepended):
+\`\`\`
+${numbered}
+\`\`\``;
+
+  const raw = await chat(
+    [
+      { role: 'system', content: 'You are an expert at explaining code clearly. Output valid JSON only. Be specific to the actual code provided — never give generic descriptions.' },
+      { role: 'user', content: prompt },
+    ],
+    1500,
+    true,
+  );
+
+  const d = extractJSON(raw) as Record<string, unknown>;
+
+  return {
+    language: String(d.language ?? 'Unknown'),
+    purpose: String(d.purpose ?? 'Purpose not determined'),
+    overview: String(d.overview ?? ''),
+    complexity: (['Simple', 'Moderate', 'Complex'].includes(String(d.complexity)) ? d.complexity : 'Moderate') as CodeExplanation['complexity'],
+    sections: ((d.sections as Array<Record<string, string>> | undefined) ?? []).map(s => ({
+      title: String(s.title ?? ''),
+      lines: String(s.lines ?? ''),
+      explanation: String(s.explanation ?? ''),
+    })),
+    inputs: ((d.inputs as string[] | undefined) ?? []).map(String),
+    outputs: String(d.outputs ?? ''),
+    dependencies: ((d.dependencies as string[] | undefined) ?? []).map(String),
+    audience: String(d.audience ?? ''),
+    keyPoints: ((d.keyPoints as string[] | undefined) ?? []).map(String),
+  };
+}
+
+// --------------------------------------------------------------------------
+// chatWithAI
+// --------------------------------------------------------------------------
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function chatWithAI(
+  code: string,
+  analysis: AIAnalysisResult | null,
+  history: ChatMessage[],
+  userMessage: string,
+): Promise<string> {
+  const analysisCtx = analysis
+    ? `Analysis results:
+- Language: ${analysis.language}
+- Overall Score: ${analysis.overallScore}/100
+- Total Issues: ${analysis.summary.totalIssues} (${analysis.summary.criticalIssues} critical, ${analysis.summary.highIssues} high, ${analysis.summary.mediumIssues} medium, ${analysis.summary.lowIssues} low)
+- Technical Debt: ${analysis.technicalDebt}
+- Code Smells: ${analysis.codeSmells}
+- Issues:
+${analysis.issues.slice(0, 8).map(i => `  [${i.severity.toUpperCase()}] Line ${i.line}: ${i.message} → ${i.suggestion}`).join('\n')}
+- Recommendations:
+${analysis.recommendations.map(r => `  • ${r}`).join('\n')}`
+    : 'No analysis has been run yet on this code.';
+
+  const systemPrompt = `You are an expert code assistant. The user is asking about the following code:
+
+\`\`\`
+${code}
+\`\`\`
+
+${analysisCtx}
+
+Rules:
+- Answer questions specifically about THIS code
+- Reference exact line numbers when relevant
+- Keep answers concise and actionable
+- When providing fixed code, use code blocks
+- If no code is pasted yet, politely ask the user to paste code first`;
+
+  const raw = await chat(
+    [
+      { role: 'system', content: systemPrompt },
+      ...history,
+      { role: 'user', content: userMessage },
+    ],
+    1000,
+  );
+  return raw.trim();
+}
+
+// --------------------------------------------------------------------------
 // fixCodeWithAI
 // --------------------------------------------------------------------------
 export async function fixCodeWithAI(
