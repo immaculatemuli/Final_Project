@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
-import { signInWithPopup, signOut, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import {
+  signInWithPopup, signOut, User,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword, updateProfile
+} from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
-import { LogOut, User as UserIcon } from 'lucide-react';
+import { LogOut, User as UserIcon, Cpu, Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react';
 import { FcGoogle } from 'react-icons/fc';
 
 interface GoogleAuthProps {
@@ -15,35 +19,24 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [showPass, setShowPass] = useState(false);
 
   const handleGoogleSignIn = async () => {
-    setLoading(true);
-    setError('');
-    
+    setLoading(true); setError('');
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
-      
-      console.log('Google sign-in successful:', user);
-      onAuthSuccess(user);
-    } catch (error: any) {
-      console.error('Google sign-in error:', error);
-      setError(error.message || 'Failed to sign in with Google');
-    } finally {
-      setLoading(false);
-    }
+      onAuthSuccess(result.user);
+    } catch (e: any) {
+      setError(e.message || 'Failed to sign in with Google');
+    } finally { setLoading(false); }
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
+    e.preventDefault(); setLoading(true); setError('');
     try {
       if (mode === 'signup') {
         const cred = await createUserWithEmailAndPassword(auth, email, password);
-        if (displayName) {
-          await updateProfile(cred.user, { displayName });
-        }
+        if (displayName) await updateProfile(cred.user, { displayName });
         onAuthSuccess(cred.user);
       } else {
         const cred = await signInWithEmailAndPassword(auth, email, password);
@@ -51,95 +44,153 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
       }
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-    } catch (error: any) {
-      console.error('Sign out error:', error);
-      setError('Failed to sign out');
-    }
+    } finally { setLoading(false); }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      <div className="bg-slate-800/50 backdrop-blur-md border border-white/10 rounded-2xl p-8 w-full max-w-md shadow-2xl hover:shadow-blue-500/10 transition-shadow">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <UserIcon className="w-8 h-8 text-white" />
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden"
+      style={{ background: '#040d1a' }}>
+
+      {/* Background blobs */}
+      <div className="blob w-96 h-96 top-0 left-0"
+        style={{ background: 'radial-gradient(circle, rgba(6,182,212,0.1), transparent 70%)' }} />
+      <div className="blob w-96 h-96 bottom-0 right-0"
+        style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.1), transparent 70%)' }} />
+
+      {/* Dot grid */}
+      <div className="dot-grid absolute inset-0 opacity-30" />
+
+      <div className="relative w-full max-w-md px-6 page-enter">
+
+        {/* Logo */}
+        <div className="text-center mb-8 space-y-3">
+          <div className="inline-flex items-center gap-2 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+              <Cpu className="w-6 h-6 text-white" />
+            </div>
+            <span className="text-2xl font-extrabold text-aurora">Intellicode</span>
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent mb-2">Intellicode</h1>
-          <p className="text-gray-400">Sign in to start analyzing your code</p>
+          <p className="text-slate-400 text-sm">
+            {mode === 'signin' ? 'Sign in to start analyzing your code' : 'Create your free account'}
+          </p>
         </div>
 
-        {error && (
-          <div className="mb-6 p-4 bg-red-500/20 border border-red-500/30 rounded-lg">
-            <p className="text-red-300 text-center text-sm">{error}</p>
-          </div>
-        )}
+        {/* Card */}
+        <div className="glass rounded-2xl p-8 space-y-5"
+          style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
 
-        <div className="space-y-3">
-          <form onSubmit={handleEmailSubmit} className="space-y-3">
+          {/* Tab switcher */}
+          <div className="flex rounded-xl overflow-hidden p-1"
+            style={{ background: 'rgba(255,255,255,0.04)' }}>
+            {(['signin', 'signup'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => { setMode(m); setError(''); }}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all duration-200"
+                style={mode === m
+                  ? { background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)', color: '#fff' }
+                  : { color: '#64748b' }
+                }
+              >
+                {m === 'signin' ? 'Sign In' : 'Sign Up'}
+              </button>
+            ))}
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="rounded-xl px-4 py-3 text-sm text-red-400 flex items-start gap-2"
+              style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <span className="mt-0.5">⚠</span> {error}
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleEmailSubmit} className="space-y-4">
             {mode === 'signup' && (
-              <input
-                type="text"
-                value={displayName}
-                onChange={e => setDisplayName(e.target.value)}
-                placeholder="Display name"
-                className="w-full p-3 bg-slate-800/50 border border-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
-              />
+              <div className="relative">
+                <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Display name"
+                  className="input-field pl-10"
+                />
+              </div>
             )}
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="Email"
-              required
-              className="w-full p-3 bg-slate-800/50 border border-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="Password"
-              required
-              className="w-full p-3 bg-slate-800/50 border border-white/10 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
-            />
+
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email address"
+                required
+                className="input-field pl-10"
+              />
+            </div>
+
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <input
+                type={showPass ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                required
+                className="input-field pl-10 pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPass(!showPass)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-blue-500/50 transform hover:scale-105"
+              className="btn-glow w-full py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
             >
-              {loading ? (mode === 'signup' ? 'Creating account...' : 'Signing in...') : (mode === 'signup' ? 'Create account' : 'Sign in')}
+              {loading ? (
+                <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  {mode === 'signin' ? 'Sign In' : 'Create Account'}
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </form>
-          <div className="flex items-center justify-center text-gray-300 text-sm">
-            <span className="mr-2">or</span>
-            <button
-              onClick={handleGoogleSignIn}
-              disabled={loading}
-              className="flex items-center justify-center space-x-2 px-4 py-3 bg-white text-gray-900 rounded-lg hover:bg-gray-100 disabled:opacity-50 transition-all border border-white/20 font-medium transform hover:scale-105 shadow-md"
-            >
-              <FcGoogle className="w-5 h-5" />
-              <span>Continue with Google</span>
-            </button>
-          </div>
-          <div className="text-center text-sm text-gray-400">
-            {mode === 'signin' ? (
-              <button onClick={() => setMode('signup')} className="text-blue-400 hover:text-blue-300 transition">Create an account</button>
-            ) : (
-              <button onClick={() => setMode('signin')} className="text-blue-400 hover:text-blue-300 transition">Have an account? Sign in</button>
-            )}
-          </div>
-        </div>
 
-        <div className="mt-8 text-center">
-          <p className="text-gray-400 text-sm">
-            By signing in, you agree to our terms of service and privacy policy
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-white/5" />
+            <span className="text-xs text-slate-600">or continue with</span>
+            <div className="flex-1 h-px bg-white/5" />
+          </div>
+
+          {/* Google */}
+          <button
+            onClick={handleGoogleSignIn}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-3 py-3 rounded-xl text-sm font-semibold transition-all hover:bg-white/90 disabled:opacity-50"
+            style={{ background: '#fff', color: '#111' }}
+          >
+            <FcGoogle className="w-5 h-5" />
+            Continue with Google
+          </button>
+
+          <p className="text-center text-xs text-slate-600">
+            By continuing, you agree to our{' '}
+            <a href="#" className="text-cyan-500 hover:text-cyan-400">Terms of Service</a>{' '}
+            and{' '}
+            <a href="#" className="text-cyan-500 hover:text-cyan-400">Privacy Policy</a>.
           </p>
         </div>
       </div>
@@ -147,30 +198,29 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
   );
 };
 
-interface UserProfileProps {
-  user: User;
-  onSignOut: () => void;
-}
+/* ── User Profile chip (used in header) ──────────────── */
+interface UserProfileProps { user: User; onSignOut: () => void; }
 
-export const UserProfile: React.FC<UserProfileProps> = ({ user, onSignOut }) => {
-  return (
-    <div className="flex items-center space-x-3">
-      <img
-        src={user.photoURL || ''}
-        alt={user.displayName || 'User'}
-        className="w-8 h-8 rounded-full border-2 border-gray-600"
-      />
-      <div className="hidden md:block">
-        <p className="text-sm font-medium text-white">{user.displayName}</p>
-        <p className="text-xs text-gray-400">{user.email}</p>
+export const UserProfile: React.FC<UserProfileProps> = ({ user, onSignOut }) => (
+  <div className="flex items-center gap-3">
+    {user.photoURL ? (
+      <img src={user.photoURL} alt={user.displayName || 'User'}
+        className="w-8 h-8 rounded-full ring-2 ring-cyan-500/40" />
+    ) : (
+      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
+        <UserIcon className="w-4 h-4 text-white" />
       </div>
-      <button
-        onClick={onSignOut}
-        className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-        title="Sign Out"
-      >
-        <LogOut className="w-4 h-4" />
-      </button>
+    )}
+    <div className="hidden md:block">
+      <p className="text-sm font-medium text-white leading-none">{user.displayName || 'User'}</p>
+      <p className="text-xs text-slate-500 mt-0.5">{user.email}</p>
     </div>
-  );
-};
+    <button
+      onClick={onSignOut}
+      className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-colors"
+      title="Sign Out"
+    >
+      <LogOut className="w-4 h-4" />
+    </button>
+  </div>
+);

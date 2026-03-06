@@ -177,7 +177,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
       setPreviewHtml(generateHTMLEmail(data));
       setIframeKey(k => k + 1);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recipientName, isModalOpen]);
 
   const openSendModal = () => {
@@ -192,7 +192,6 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
     ].join('\n');
     setRecommendationToSend(summary);
 
-    // Generate HTML preview with placeholder name
     const data = buildEmailData('Developer');
     if (data) setPreviewHtml(generateHTMLEmail(data));
     setIframeKey(k => k + 1);
@@ -210,74 +209,98 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
     setPreviewHtml('');
   };
 
+  /* ── Loading state ──────────────────────────────── */
   if (isAnalyzing) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
-        <div className="flex items-center justify-center py-12">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-              Analyzing Your Code
-            </h3>
-            <p className="text-gray-600 dark:text-gray-400">
-              Please wait while we perform a comprehensive analysis...
-            </p>
+      <div className="glass rounded-2xl p-8 h-full" style={{ border: '1px solid rgba(255,255,255,0.07)', minHeight: '400px' }}>
+        <div className="flex flex-col items-center justify-center h-64 space-y-6">
+          <div className="relative">
+            <div className="w-16 h-16 rounded-full" style={{ border: '2px solid rgba(6,182,212,0.15)' }} />
+            <div className="absolute inset-0 w-16 h-16 rounded-full animate-spin" style={{ border: '2px solid transparent', borderTopColor: '#06b6d4' }} />
+            <div className="absolute inset-2 w-12 h-12 rounded-full animate-spin" style={{ border: '2px solid transparent', borderTopColor: '#8b5cf6', animationDirection: 'reverse', animationDuration: '1.2s' }} />
+          </div>
+          <div className="text-center space-y-2">
+            <h3 className="text-base font-bold text-white">Analyzing Your Code</h3>
+            <p className="text-sm text-slate-500">AI is scanning for issues, vulnerabilities and opportunities...</p>
+          </div>
+          <div className="w-48 space-y-2">
+            {['Security scan', 'Performance check', 'Quality analysis'].map((step, i) => (
+              <div key={step} className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full animate-pulse" style={{ background: '#06b6d4', animationDelay: `${i * 0.3}s` }} />
+                <span className="text-xs text-slate-500">{step}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
     );
   }
 
+  /* ── Empty state ────────────────────────────────── */
   if (!analysis) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-lg">
-        <div className="text-center py-12">
-          <Code className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-            Ready to Analyze
-          </h3>
-          <p className="text-gray-600 dark:text-gray-400">
-            Upload your code or paste it in the editor to get started with AI-powered analysis
-          </p>
+      <div className="glass rounded-2xl p-8" style={{ border: '1px solid rgba(255,255,255,0.07)', minHeight: '400px' }}>
+        <div className="flex flex-col items-center justify-center h-64 space-y-5 text-center">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.2)' }}>
+            <Code className="w-8 h-8 text-cyan-400" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-base font-bold text-white">Ready to Analyze</h3>
+            <p className="text-sm text-slate-500 max-w-xs">
+              Paste your code in the editor and click <strong className="text-cyan-400">Analyze</strong> to get AI-powered insights.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-3 pt-2">
+            {[
+              { label: 'Security', color: '#06b6d4' },
+              { label: 'Performance', color: '#8b5cf6' },
+              { label: 'Quality', color: '#ec4899' },
+            ].map((item) => (
+              <div key={item.label} className="text-center px-3 py-2 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="w-2 h-2 rounded-full mx-auto mb-1" style={{ background: item.color }} />
+                <span className="text-xs text-slate-500">{item.label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
   }
 
+  /* ── Helpers ────────────────────────────────────── */
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
-      case 'critical': return <XCircle className="w-5 h-5 text-red-500" />;
-      case 'high': return <AlertTriangle className="w-5 h-5 text-orange-500" />;
-      case 'medium': return <Info className="w-5 h-5 text-yellow-500" />;
-      case 'low': return <CheckCircle className="w-5 h-5 text-blue-500" />;
-      default: return <Info className="w-5 h-5 text-gray-500" />;
-    }
-  };
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical': return 'text-red-600 bg-red-50 border-red-200 dark:text-red-400 dark:bg-red-900/20 dark:border-red-800';
-      case 'high': return 'text-orange-600 bg-orange-50 border-orange-200 dark:text-orange-400 dark:bg-orange-900/20 dark:border-orange-800';
-      case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200 dark:text-yellow-400 dark:bg-yellow-900/20 dark:border-yellow-800';
-      case 'low': return 'text-blue-600 bg-blue-50 border-blue-200 dark:text-blue-400 dark:bg-blue-900/20 dark:border-blue-800';
-      default: return 'text-gray-600 bg-gray-50 border-gray-200 dark:text-gray-400 dark:bg-gray-900/20 dark:border-gray-800';
+      case 'critical': return <XCircle className="w-4 h-4 text-red-400" />;
+      case 'high': return <AlertTriangle className="w-4 h-4 text-orange-400" />;
+      case 'medium': return <Info className="w-4 h-4 text-yellow-400" />;
+      case 'low': return <CheckCircle className="w-4 h-4 text-green-400" />;
+      default: return <Info className="w-4 h-4 text-slate-400" />;
     }
   };
 
   const getCategoryIcon = (category: string) => {
     switch (category.toLowerCase()) {
-      case 'security': return <Shield className="w-4 h-4" />;
-      case 'performance': return <Zap className="w-4 h-4" />;
-      case 'maintainability': return <Target className="w-4 h-4" />;
-      case 'documentation': return <FileText className="w-4 h-4" />;
-      default: return <Code className="w-4 h-4" />;
+      case 'security': return <Shield className="w-3 h-3" />;
+      case 'performance': return <Zap className="w-3 h-3" />;
+      case 'maintainability': return <Target className="w-3 h-3" />;
+      case 'documentation': return <FileText className="w-3 h-3" />;
+      default: return <Code className="w-3 h-3" />;
     }
   };
 
   const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-green-600 dark:text-green-400';
-    if (score >= 60) return 'text-yellow-600 dark:text-yellow-400';
-    return 'text-red-600 dark:text-red-400';
+    if (score >= 80) return '#4ade80';
+    if (score >= 60) return '#facc15';
+    return '#f87171';
+  };
+
+  const getIssueBorderColor = (severity: string) => {
+    switch (severity) {
+      case 'critical': return 'rgba(239,68,68,0.3)';
+      case 'high': return 'rgba(249,115,22,0.25)';
+      case 'medium': return 'rgba(234,179,8,0.2)';
+      default: return 'rgba(34,197,94,0.15)';
+    }
   };
 
   const filteredIssues = analysis.issues.filter(issue => {
@@ -288,11 +311,8 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   const toggleIssueExpansion = (index: number) => {
     const newExpanded = new Set(expandedIssues);
-    if (newExpanded.has(index)) {
-      newExpanded.delete(index);
-    } else {
-      newExpanded.add(index);
-    }
+    if (newExpanded.has(index)) newExpanded.delete(index);
+    else newExpanded.add(index);
     setExpandedIssues(newExpanded);
   };
 
@@ -310,81 +330,82 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const severities = ['all', 'critical', 'high', 'medium', 'low'];
   const hasAutoFix = analysis.issues.some(issue => issue.fixedCode && issue.fixedCode.trim().length > 0);
 
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg">
-      {/* Header with Overall Score */}
-      <div className="p-6 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-gray-800 dark:to-gray-700">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-              Code Review Results
-            </h2>
-            <p className="text-gray-600 dark:text-gray-400 flex items-center space-x-4">
-              <span className="flex items-center">
-                <Code className="w-4 h-4 mr-1" />
-                {analysis.language}
-              </span>
-              <span>•</span>
-              <span className="flex items-center">
-                <AlertTriangle className="w-4 h-4 mr-1" />
-                {analysis.summary.totalIssues} issues
-              </span>
-              <span>•</span>
-              <span className="flex items-center">
-                <FileText className="w-4 h-4 mr-1" />
-                {analysis.metrics.linesOfCode} lines
-              </span>
-            </p>
-          </div>
-          <div className="text-right space-y-2">
-            <div>
-              <div className={`text-4xl font-bold transition-all duration-500 ${getScoreColor(analysis.overallScore)}`}>
-                {displayedScore}%
-              </div>
-              <div className="text-sm text-gray-500 dark:text-gray-400">Overall Score</div>
-            </div>
+  // SVG ring math
+  const RING_R = 30;
+  const RING_CIRC = 2 * Math.PI * RING_R; // ≈ 188.5
 
+  /* ── Main render ────────────────────────────────── */
+  return (
+    <>
+    <div className="glass rounded-2xl overflow-hidden flex flex-col" style={{ border: '1px solid rgba(255,255,255,0.07)', minHeight: '400px' }}>
+
+      {/* ── Header ──────────────────────────────────── */}
+      <div className="px-5 py-4 flex items-center justify-between gap-4 flex-wrap flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.25)' }}>
+
+        {/* Title + meta */}
+        <div className="min-w-0">
+          <h2 className="text-base font-bold text-white">Analysis Results</h2>
+          <p className="text-xs text-slate-400 flex items-center gap-2 mt-1 flex-wrap">
+            <span className="flex items-center gap-1"><Code className="w-3.5 h-3.5" />{analysis.language}</span>
+            <span>·</span>
+            <span>{analysis.summary.totalIssues} issues</span>
+            <span>·</span>
+            <span>{analysis.metrics.linesOfCode} LOC</span>
+          </p>
+        </div>
+
+        {/* Score ring + actions */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {/* SVG ring */}
+          <div className="relative flex items-center justify-center w-[84px] h-[84px]">
+            <svg width="84" height="84" viewBox="0 0 72 72">
+              <circle cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5" stroke="#27272a" />
+              <circle
+                cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5"
+                stroke={getScoreColor(analysis.overallScore)}
+                strokeLinecap="round"
+                strokeDasharray={RING_CIRC}
+                strokeDashoffset={RING_CIRC - (displayedScore / 100) * RING_CIRC}
+                transform="rotate(-90 36 36)"
+                style={{ transition: 'stroke-dashoffset 1s cubic-bezier(0.4,0,0.2,1)' }}
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-xl font-bold leading-none" style={{ color: getScoreColor(analysis.overallScore) }}>{displayedScore}</span>
+              <span className="text-[10px] text-slate-500 leading-none mt-0.5">/ 100</span>
+            </div>
+          </div>
+
+          {/* Buttons */}
+          <div className="flex flex-col gap-1.5">
             {wasAutoFixed && (
-              <div className="flex justify-end">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-700">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  Auto-Fixed &amp; Re-analyzed
-                </span>
-              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold"
+                style={{ background: 'rgba(16,185,129,0.15)', color: '#4ade80', border: '1px solid rgba(16,185,129,0.3)' }}>
+                <CheckCircle className="w-3 h-3" /> Auto-Fixed
+              </span>
             )}
-            <div className="flex gap-2 justify-end">
+            <div className="flex gap-1.5">
               {analysis.issues.length > 0 && (
                 <button
                   onClick={onAutoFix}
                   disabled={isFixing}
-                  className={`inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white shadow-lg transform transition-all ${isFixing ? 'bg-gray-400 cursor-wait' :
-                    hasAutoFix
-                      ? 'bg-green-600 hover:bg-green-700 hover:scale-105'
-                      : 'bg-blue-600 hover:bg-blue-700 hover:scale-105'
-                    }`}
-                  title={hasAutoFix ? "Apply suggested fixes" : "Attempt to fix issues automatically"}
+                  className="btn-glow flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-wait"
+                  style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
                 >
-                  {isFixing ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      Fixing...
-                    </>
-                  ) : (
-                    <>
-                      {hasAutoFix ? <CheckCircle className="w-4 h-4 mr-2" /> : <Zap className="w-4 h-4 mr-2" />}
-                      {hasAutoFix ? "Fix Issues" : "Auto Fix"}
-                    </>
-                  )}
+                  {isFixing
+                    ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />Fixing…</>
+                    : <><Zap className="w-3.5 h-3.5" />{hasAutoFix ? 'Fix Issues' : 'Auto Fix'}</>
+                  }
                 </button>
               )}
               {onSaveSnippet && (
                 <button
                   onClick={onSaveSnippet}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 shadow-sm transition-all hover:scale-105"
-                  title="Save this snippet and analysis to your library"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.07)' }}
                 >
-                  <Bookmark className="w-4 h-4 mr-2" />
-                  Save to Library
+                  <Bookmark className="w-3.5 h-3.5" /> Save
                 </button>
               )}
             </div>
@@ -392,443 +413,310 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
         </div>
       </div>
 
-      {/* Quick Stats */}
-      <div className="p-6 bg-gray-50 dark:bg-gray-700/50">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-              {analysis.summary.criticalIssues}
-            </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Critical</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-              {analysis.summary.highIssues}
-            </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">High</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-              {analysis.summary.mediumIssues}
-            </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Medium</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-              {analysis.summary.lowIssues}
-            </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Low</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-              {analysis.codeSmells}
-            </div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Code Smells</div>
-          </div>
-        </div>
-      </div>
+      {/* ── Scrollable body ─────────────────────────── */}
+      <div className="flex-1 overflow-y-auto">
 
-      {/* Metrics Section */}
-      {showMetrics && (
-        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Quality Metrics
-            </h3>
+        {/* Quick stats bar */}
+        <div className="grid grid-cols-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          {[
+            { label: 'Critical', value: analysis.summary.criticalIssues, color: '#f87171', sev: 'critical' },
+            { label: 'High', value: analysis.summary.highIssues, color: '#fb923c', sev: 'high' },
+            { label: 'Medium', value: analysis.summary.mediumIssues, color: '#facc15', sev: 'medium' },
+            { label: 'Low', value: analysis.summary.lowIssues, color: '#4ade80', sev: 'low' },
+            { label: 'Smells', value: analysis.codeSmells, color: '#a78bfa', sev: null },
+          ].map((s, i) => (
             <button
-              onClick={() => setShowMetrics(!showMetrics)}
-              className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              key={s.label}
+              onClick={() => s.sev && setSelectedSeverity(s.sev)}
+              className="py-3.5 text-center transition-colors"
+              style={{
+                background: 'rgba(0,0,0,0.18)',
+                borderRight: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                cursor: s.sev ? 'pointer' : 'default',
+              }}
             >
-              <ChevronDown className="w-5 h-5" />
+              <div className="text-lg font-bold" style={{ color: s.color }}>{s.value}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
             </button>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Complexity</span>
-                <TrendingUp className="w-4 h-4 text-gray-500" />
-              </div>
-              <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.complexity)}`}>
-                {analysis.metrics.complexity}%
-              </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2">
-                <div
-                  className={`h-1.5 rounded-full transition-all duration-1000 ${analysis.metrics.complexity >= 80 ? 'bg-green-500' : analysis.metrics.complexity >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                  style={{ width: `${analysis.metrics.complexity}%` }}
-                ></div>
-              </div>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Maintainability</span>
-                <Target className="w-4 h-4 text-gray-500" />
-              </div>
-              <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.maintainability)}`}>
-                {analysis.metrics.maintainability}%
-              </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2">
-                <div
-                  className={`h-1.5 rounded-full transition-all duration-1000 ${analysis.metrics.maintainability >= 80 ? 'bg-green-500' : analysis.metrics.maintainability >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                  style={{ width: `${analysis.metrics.maintainability}%` }}
-                ></div>
-              </div>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Security</span>
-                <Shield className="w-4 h-4 text-gray-500" />
-              </div>
-              <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.security)}`}>
-                {analysis.metrics.security}%
-              </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 mt-2">
-                <div
-                  className={`h-1.5 rounded-full transition-all duration-1000 ${analysis.metrics.security >= 80 ? 'bg-green-500' : analysis.metrics.security >= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                  style={{ width: `${analysis.metrics.security}%` }}
-                ></div>
-              </div>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Performance</span>
-                <Zap className="w-4 h-4 text-gray-500" />
-              </div>
-              <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.performance)}`}>
-                {analysis.metrics.performance}%
-              </div>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Documentation</span>
-                <FileText className="w-4 h-4 text-gray-500" />
-              </div>
-              <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.documentation)}`}>
-                {analysis.metrics.documentation}%
-              </div>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-gray-600 dark:text-gray-400">Readability</span>
-                <Clock className="w-4 h-4 text-gray-500" />
-              </div>
-              <div className={`text-xl font-bold ${getScoreColor(analysis.metrics.readability)}`}>
-                {analysis.metrics.readability}%
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
-      )}
 
-      {/* Quick Categories */}
-      <div className="px-6 pt-4">
-        <div className="flex items-center gap-2">
+        {/* Metrics */}
+        <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
           <button
-            onClick={() => { setSelectedSeverity('critical'); }}
-            className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700"
-          >Errors</button>
-          <button
-            onClick={() => { setSelectedSeverity('medium'); }}
-            className="px-3 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700"
-          >Warnings</button>
-          <button
-            onClick={() => { const el = document.getElementById('recommendations-section'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }}
-            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-          >Recommendations</button>
-          <button
-            onClick={() => { setSelectedSeverity('all'); setSelectedCategory('all'); }}
-            className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700"
-          >Reset</button>
+            className="w-full flex items-center justify-between mb-3"
+            onClick={() => setShowMetrics(v => !v)}
+          >
+            <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">Quality Metrics</span>
+            <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${showMetrics ? '' : '-rotate-90'}`} />
+          </button>
+
+          {showMetrics && (
+            <div className="grid grid-cols-2 gap-2.5">
+              {[
+                { label: 'Complexity', value: analysis.metrics.complexity, icon: TrendingUp, color: '#06b6d4' },
+                { label: 'Maintainability', value: analysis.metrics.maintainability, icon: Target, color: '#8b5cf6' },
+                { label: 'Security', value: analysis.metrics.security, icon: Shield, color: '#ec4899' },
+                { label: 'Performance', value: analysis.metrics.performance, icon: Zap, color: '#f59e0b' },
+                { label: 'Documentation', value: analysis.metrics.documentation, icon: FileText, color: '#4ade80' },
+                { label: 'Readability', value: analysis.metrics.readability, icon: Clock, color: '#a78bfa' },
+              ].map((m) => {
+                const Icon = m.icon;
+                return (
+                  <div key={m.label} className="rounded-xl p-3.5"
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: m.color }} />
+                        <span className="text-xs text-slate-300">{m.label}</span>
+                      </div>
+                      <span className="text-sm font-bold" style={{ color: m.color }}>{m.value}%</span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                      <div className="h-full rounded-full transition-all duration-700"
+                        style={{ width: `${m.value}%`, background: `linear-gradient(90deg, ${m.color}60, ${m.color})` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      </div>
 
-      {/* Filters */}
-      <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex flex-wrap gap-4 items-center">
-          <div className="flex items-center space-x-2">
-            <Filter className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Filters:</span>
-          </div>
+        {/* Filter bar */}
+        <div className="px-5 py-3 flex items-center gap-2 flex-wrap"
+          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)' }}>
+          <Filter className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
           <select
             value={selectedSeverity}
             onChange={(e) => setSelectedSeverity(e.target.value)}
-            className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            className="text-xs rounded-lg px-2.5 py-1.5 outline-none"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)', color: '#94a3b8' }}
           >
-            {severities.map(severity => (
-              <option key={severity} value={severity}>
-                {severity === 'all' ? 'All Severities' : severity.charAt(0).toUpperCase() + severity.slice(1)}
+            {severities.map(s => (
+              <option key={s} value={s} style={{ background: '#0f172a' }}>
+                {s === 'all' ? 'All severities' : s.charAt(0).toUpperCase() + s.slice(1)}
               </option>
             ))}
           </select>
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            className="text-xs rounded-lg px-2.5 py-1.5 outline-none"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)', color: '#94a3b8' }}
           >
-            {categories.map(category => (
-              <option key={category} value={category}>
-                {category === 'all' ? 'All Categories' : category.charAt(0).toUpperCase() + category.slice(1)}
+            {categories.map(c => (
+              <option key={c} value={c} style={{ background: '#0f172a' }}>
+                {c === 'all' ? 'All categories' : c.charAt(0).toUpperCase() + c.slice(1)}
               </option>
             ))}
           </select>
-          <div className="text-sm text-gray-500 dark:text-gray-400">
-            Showing {filteredIssues.length} of {analysis.issues.length} issues
-          </div>
+          <span className="text-xs text-slate-500 ml-auto">{filteredIssues.length} / {analysis.issues.length} issues</span>
+          <button
+            onClick={() => { setSelectedSeverity('all'); setSelectedCategory('all'); }}
+            className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            Reset
+          </button>
         </div>
-      </div>
 
-      {/* Issues List */}
-      <div className="p-6">
-        {filteredIssues.length === 0 ? (
-          <div className="text-center py-8">
-            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-              {selectedSeverity === 'all' && selectedCategory === 'all'
-                ? 'No Issues Found!'
-                : 'No Issues Match Your Filters'
-              }
-            </h3>
-            <p className="text-gray-600 dark:text-gray-400">
-              {selectedSeverity === 'all' && selectedCategory === 'all'
-                ? 'Your code looks great! No issues were detected.'
-                : 'Try adjusting your filters to see more results.'
-              }
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredIssues.map((issue, index) => (
+        {/* Issues list */}
+        <div className="p-4 space-y-2.5">
+          {filteredIssues.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center space-y-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)' }}>
+                <CheckCircle className="w-5 h-5 text-green-400" />
+              </div>
+              <p className="text-sm font-medium text-white">
+                {selectedSeverity === 'all' && selectedCategory === 'all' ? 'No Issues Found!' : 'No matches'}
+              </p>
+              <p className="text-xs text-slate-600">
+                {selectedSeverity === 'all' && selectedCategory === 'all'
+                  ? 'Your code looks great!'
+                  : 'Try adjusting your filters.'}
+              </p>
+            </div>
+          ) : (
+            filteredIssues.map((issue, index) => (
               <div
                 key={index}
-                className={`border rounded-lg p-4 ${getSeverityColor(issue.severity)} transition-all duration-200`}
+                className="rounded-xl overflow-hidden transition-all duration-200"
+                style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${getIssueBorderColor(issue.severity)}` }}
               >
+                {/* Issue row */}
                 <div
-                  className="flex items-start justify-between cursor-pointer group"
-                  onClick={() => issue.line && onIssueClick?.(issue.line)}
+                  className="flex items-start gap-3 p-3.5 cursor-pointer group"
+                  onClick={() => { toggleIssueExpansion(index); issue.line && onIssueClick?.(issue.line); }}
                 >
-                  <div className="flex items-start space-x-3 flex-1">
-                    <div className="flex-shrink-0 mt-1">
-                      {getSeverityIcon(issue.severity)}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <h4 className="font-medium text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                          {issue.message}
-                        </h4>
-                        <span className={`px-2 py-1 text-xs rounded-full ${getSeverityColor(issue.severity)}`}>
-                          {issue.severity}
-                        </span>
-                        <span className="flex items-center space-x-1 text-xs text-gray-500 dark:text-gray-400">
-                          {getCategoryIcon(issue.category)}
-                          <span>{issue.category}</span>
-                        </span>
-                      </div>
+                  <div className="flex-shrink-0 mt-0.5">{getSeverityIcon(issue.severity)}</div>
 
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                      <span className={`badge-${issue.severity} tag text-xs py-0.5 px-2`}>{issue.severity}</span>
+                      <span className="flex items-center gap-1 text-xs text-slate-400">
+                        {getCategoryIcon(issue.category)}{issue.category}
+                      </span>
                       {issue.line && (
-                        <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                          Line {issue.line}{issue.column ? `:${issue.column}` : ''}
-                        </div>
+                        <span className="text-xs text-slate-500 font-mono ml-auto">Line {issue.line}</span>
                       )}
-
-                      {issue.code && (
-                        <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-md mb-3">
-                          <pre className="text-sm text-gray-800 dark:text-gray-200 overflow-x-auto">
-                            <code>{issue.code}</code>
-                          </pre>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-400">
-                          <span>Confidence: {issue.confidence}%</span>
-                          <span>Impact: {issue.impact}</span>
-                          <span>Effort: {issue.effort}</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <button
-                            onClick={() => onRateIssue && onRateIssue(index, 1)}
-                            className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
-                            title="Mark suggestion as helpful"
-                          >
-                            Helpful
-                          </button>
-                          <button
-                            onClick={() => onRateIssue && onRateIssue(index, -1)}
-                            className="px-2 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700"
-                            title="Not helpful"
-                          >
-                            Not helpful
-                          </button>
-                          <button
-                            onClick={() => onFlagIssue && onFlagIssue(index)}
-                            className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700"
-                            title="Flag suggestion"
-                          >
-                            Flag
-                          </button>
-                        </div>
+                    </div>
+                    <p className="text-sm text-slate-200 leading-relaxed group-hover:text-white transition-colors">{issue.message}</p>
+                    {issue.code && (
+                      <div className="mt-2 rounded-lg px-3 py-2 font-mono text-xs text-slate-400 overflow-x-auto"
+                        style={{ background: 'rgba(0,0,0,0.35)' }}>
+                        {issue.code}
                       </div>
+                    )}
+                    <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
+                      <span>Confidence: {issue.confidence}%</span>
+                      <span>Impact: {issue.impact}</span>
+                      <span>Effort: {issue.effort}</span>
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => toggleIssueExpansion(index)}
-                    className="flex-shrink-0 p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
-                  >
-                    {expandedIssues.has(index) ? (
-                      <ChevronDown className="w-4 h-4" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4" />
-                    )}
-                  </button>
+                  <div className="flex-shrink-0 text-slate-600 group-hover:text-slate-400 transition-colors mt-0.5">
+                    {expandedIssues.has(index) ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  </div>
                 </div>
 
+                {/* Expanded details */}
                 {expandedIssues.has(index) && (
-                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
+                  <div className="px-4 pb-4 pt-2 space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+
                     {issue.suggestion && (
-                      <div className="mb-4">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <Lightbulb className="w-4 h-4 text-yellow-500" />
-                          <span className="font-medium text-gray-900 dark:text-white">Suggestion</span>
+                      <div className="rounded-lg p-3.5"
+                        style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.15)' }}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Lightbulb className="w-4 h-4 text-amber-400" />
+                          <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide">Suggestion</span>
                         </div>
-                        <p className="text-gray-700 dark:text-gray-300 text-sm">
-                          {issue.suggestion}
-                        </p>
+                        <p className="text-sm text-slate-300 leading-relaxed">{issue.suggestion}</p>
                       </div>
                     )}
 
                     {issue.fixedCode && (
-                      <div className="mb-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center space-x-2">
-                            <CheckCircle className="w-4 h-4 text-green-500" />
-                            <span className="font-medium text-gray-900 dark:text-white">Suggested Fix</span>
+                      <div className="rounded-lg overflow-hidden"
+                        style={{ border: '1px solid rgba(74,222,128,0.2)' }}>
+                        <div className="flex items-center justify-between px-3.5 py-2.5"
+                          style={{ background: 'rgba(74,222,128,0.07)' }}>
+                          <div className="flex items-center gap-2">
+                            <CheckCircle className="w-3.5 h-3.5 text-green-400" />
+                            <span className="text-xs font-semibold text-green-400 uppercase tracking-wide">Suggested Fix</span>
                           </div>
                           <button
                             onClick={() => copyToClipboard(issue.fixedCode!, index)}
-                            className="flex items-center space-x-1 px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded transition-colors"
+                            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
                           >
-                            <Copy className="w-3 h-3" />
-                            <span>{copiedCode === index ? 'Copied!' : 'Copy'}</span>
+                            <Copy className="w-3.5 h-3.5" />
+                            {copiedCode === index ? 'Copied!' : 'Copy'}
                           </button>
                         </div>
-                        <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-md">
-                          <pre className="text-sm text-green-800 dark:text-green-200 overflow-x-auto">
-                            <code>{issue.fixedCode}</code>
-                          </pre>
-                        </div>
+                        <pre className="px-3.5 py-3 text-xs text-green-300 overflow-x-auto font-mono leading-relaxed"
+                          style={{ background: 'rgba(0,0,0,0.3)' }}>
+                          <code>{issue.fixedCode}</code>
+                        </pre>
                       </div>
                     )}
 
-                    {issue.references && issue.references.length > 0 && (
-                      <div>
-                        <div className="flex items-center space-x-2 mb-2">
-                          <ExternalLink className="w-4 h-4 text-blue-500" />
-                          <span className="font-medium text-gray-900 dark:text-white">Learn More</span>
-                        </div>
-                        <div className="space-y-1">
-                          {issue.references.map((ref, refIndex) => (
-                            <a
-                              key={refIndex}
-                              href={ref}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 dark:text-blue-400 hover:underline text-sm block"
-                            >
-                              {ref}
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    {/* Issue actions */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => onRateIssue?.(index, 1)}
+                        className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}
+                      >Helpful</button>
+                      <button
+                        onClick={() => onRateIssue?.(index, -1)}
+                        className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{ background: 'rgba(255,255,255,0.04)', color: '#64748b', border: '1px solid rgba(255,255,255,0.06)' }}
+                      >Not helpful</button>
+                      <button
+                        onClick={() => onFlagIssue?.(index)}
+                        className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{ background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.15)' }}
+                      >Flag</button>
+                      {issue.references && issue.references.length > 0 && (
+                        <a
+                          href={issue.references[0]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-auto flex items-center gap-1.5 text-xs text-cyan-500 hover:text-cyan-400 transition-colors"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />Docs
+                        </a>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
-            ))}
+            ))
+          )}
+        </div>
+
+        {/* Recommendations */}
+        {analysis.recommendations && analysis.recommendations.length > 0 && (
+          <div className="mx-4 mb-4 rounded-xl p-4"
+            style={{ background: 'rgba(6,182,212,0.05)', border: '1px solid rgba(6,182,212,0.15)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-semibold uppercase tracking-widest text-cyan-400 flex items-center gap-1.5">
+                <Lightbulb className="w-4 h-4" /> Recommendations
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    const lines = [
+                      `Language: ${analysis.language}`,
+                      `Score: ${analysis.overallScore}%`,
+                      `Total Issues: ${analysis.summary.totalIssues}`,
+                      '',
+                      'Recommendations:',
+                      ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`),
+                    ].join('\n');
+                    try { await navigator.clipboard.writeText(lines); } catch {}
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  <Copy className="w-3.5 h-3.5" />Copy
+                </button>
+                <button
+                  onClick={openSendModal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all"
+                  style={{ background: 'linear-gradient(135deg, #1d4ed8, #7c3aed)' }}
+                >
+                  <Mail className="w-3.5 h-3.5" />Email Report
+                </button>
+              </div>
+            </div>
+            <ul className="space-y-2.5">
+              {analysis.recommendations.map((r, i) => (
+                <li key={i} className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold text-white"
+                    style={{ background: 'rgba(6,182,212,0.3)' }}>{i + 1}</span>
+                  <span className="text-sm text-slate-300 leading-relaxed">{r}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
-      </div>
 
-      {/* Recommendations */}
-      {analysis && analysis.recommendations && analysis.recommendations.length > 0 && (
-        <div id="recommendations-section" className="p-6 border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Recommendations
+        {/* Technical Debt */}
+        {analysis.technicalDebt && (
+          <div className="mx-4 mb-4 rounded-xl p-4"
+            style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)' }}>
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-amber-400 mb-2 flex items-center gap-2">
+              <Clock className="w-4 h-4" /> Technical Debt
             </h3>
-            <button
-              className="flex items-center gap-2 px-4 py-2 text-white rounded-lg text-sm font-semibold transition-all hover:opacity-90 shadow-lg"
-              style={{ background: 'linear-gradient(135deg,#1d4ed8,#7c3aed)' }}
-              onClick={openSendModal}
-              title="Send AI-generated report via email"
-            >
-              <Mail className="w-4 h-4" />
-              Email Report
-            </button>
+            <p className="text-sm text-slate-300 leading-relaxed">{analysis.technicalDebt}</p>
           </div>
-          <ul className="space-y-2">
-            {analysis.recommendations.map((recommendation, index) => (
-              <li key={index} className="flex items-start space-x-2">
-                <Lightbulb className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
-                <span className="text-gray-700 dark:text-gray-300 text-sm">
-                  {recommendation}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-4 flex gap-2">
-            <button
-              onClick={async () => {
-                const lines = [
-                  `Language: ${analysis.language}`,
-                  `Score: ${analysis.overallScore}%`,
-                  `Total Issues: ${analysis.summary.totalIssues}`,
-                  '',
-                  'Recommendations:',
-                  ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`)
-                ].join('\n');
+        )}
 
-                try {
-                  await navigator.clipboard.writeText(lines);
-                  alert('Report copied to clipboard!');
-                } catch (e) {
-                  console.error('Copy failed', e);
-                  alert('Failed to copy report.');
-                }
-              }}
-              className="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-            >
-              Copy Report
-            </button>
-            <button
-              onClick={async () => {
-                const lines = [
-                  `Language: ${analysis.language}`,
-                  `Score: ${analysis.overallScore}%`,
-                  `Total Issues: ${analysis.summary.totalIssues}`,
-                  '',
-                  'Recommendations:',
-                  ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`)
-                ].join('\n');
-                const blob = new Blob([lines], { type: 'text/plain' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `code-review-summary-${Date.now()}.txt`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-              }}
-              className="px-3 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-800 transition-colors"
-            >
-              Download text summary
-            </button>
-          </div>
-        </div>
-      )}
+      </div>{/* end scrollable body */}
 
-      {/* Send Recommendation Modal — professional redesign */}
-      {isModalOpen && (
+    </div>{/* end glass panel */}
+
+    {/* ── Email Modal — rendered outside glass to escape backdrop-filter stacking context ── */}
+    {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}>
           <div className="w-full max-w-3xl rounded-2xl overflow-hidden shadow-2xl flex flex-col"
@@ -948,7 +836,6 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
               {/* Action buttons */}
               <div className="px-6 py-5 flex items-center gap-3">
-                {/* Download always available */}
                 <button
                   onClick={() => {
                     const d = buildEmailData(recipientName || 'Developer');
@@ -964,7 +851,6 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                   Download HTML
                 </button>
 
-                {/* Send via EmailJS (or show setup required) */}
                 <button
                   disabled={sending || !recipientEmail || !recipientName}
                   onClick={async () => {
@@ -982,7 +868,6 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                         setSendSuccess(`Report sent successfully to ${recipientEmail}!`);
                         setTimeout(closeSendModal, 2500);
                       } else {
-                        // Fallback: download + open mail client
                         downloadEmailHTML(html, recipientName);
                         const plain = recommendationToSend;
                         const mailto = `mailto:${recipientEmail}?subject=${encodeURIComponent(`${analysis?.language || 'Code'} Analysis — Score: ${analysis?.overallScore}/100`)}&body=${encodeURIComponent(plain.slice(0, 1800))}`;
@@ -1023,18 +908,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
         </div>
       )}
 
-      {/* Technical Debt */}
-      {analysis.technicalDebt && (
-        <div className="p-6 border-t border-gray-200 dark:border-gray-700 bg-orange-50 dark:bg-orange-900/20">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-            Technical Debt
-          </h3>
-          <p className="text-gray-700 dark:text-gray-300 text-sm">
-            {analysis.technicalDebt}
-          </p>
-        </div>
-      )}
-    </div>
+    </>
   );
 };
 

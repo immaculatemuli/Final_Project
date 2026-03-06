@@ -6,7 +6,9 @@
       "Bash(cmd /c \"netstat -ano\")",
       "Bash(firebase emulators:start:*)",
       "Bash(npx tsc:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(wc:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

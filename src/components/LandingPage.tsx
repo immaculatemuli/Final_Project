@@ -1,175 +1,321 @@
-import React from 'react';
-import { Code, Zap, Shield, GitBranch, ArrowRight, Check } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Code2, GitBranch, Shield, Zap, ArrowRight, CheckCircle2, Terminal, Cpu, BarChart3, Lock } from 'lucide-react';
 
 interface LandingPageProps {
   onGetStarted: () => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
-  const features = [
-    {
-      icon: Code,
-      title: 'Code Snippet Analysis',
-      description: 'Paste your code and get instant comprehensive analysis with quality metrics and improvement suggestions.',
-    },
-    {
-      icon: GitBranch,
-      title: 'GitHub Repository Analysis',
-      description: 'Analyze entire repositories with a single URL. Get insights across multiple files and identify patterns.',
-    },
-    {
-      icon: Shield,
-      title: 'Security & Performance',
-      description: 'Detect security vulnerabilities and performance bottlenecks with detailed vulnerability reports.',
-    },
-    {
-      icon: Zap,
-      title: 'AI-Powered Suggestions',
-      description: 'Receive actionable code improvement suggestions powered by advanced AI analysis algorithms.',
-    },
-  ];
+const FEATURES = [
+  {
+    icon: Code2,
+    title: 'Deep Code Analysis',
+    description: 'Instant, comprehensive review of logic, complexity, and maintainability across any language.',
+    color: 'cyan',
+    gradient: 'from-cyan-500/20 to-cyan-600/5',
+    border: 'rgba(6,182,212,0.3)',
+    glow: 'rgba(6,182,212,0.12)',
+  },
+  {
+    icon: GitBranch,
+    title: 'GitHub Integration',
+    description: 'Analyze entire repositories with one URL. Multi-file scanning, pattern detection in seconds.',
+    color: 'violet',
+    gradient: 'from-violet-500/20 to-violet-600/5',
+    border: 'rgba(139,92,246,0.3)',
+    glow: 'rgba(139,92,246,0.12)',
+  },
+  {
+    icon: Shield,
+    title: 'Security Scanning',
+    description: 'Detect CVEs, injection flaws, exposed secrets, and OWASP Top-10 vulnerabilities automatically.',
+    color: 'pink',
+    gradient: 'from-pink-500/20 to-pink-600/5',
+    border: 'rgba(236,72,153,0.3)',
+    glow: 'rgba(236,72,153,0.12)',
+  },
+  {
+    icon: Zap,
+    title: 'AI-Powered Fixes',
+    description: 'One-click Auto-Fix applies GPT-4o-mini patches and re-analyzes to verify every improvement.',
+    color: 'amber',
+    gradient: 'from-amber-500/20 to-amber-600/5',
+    border: 'rgba(245,158,11,0.3)',
+    glow: 'rgba(245,158,11,0.12)',
+  },
+];
 
-  const benefits = [
-    'Real-time code quality scoring',
-    'Multi-language support',
-    'Historical analysis tracking',
-    'Detailed issue categorization',
-    'Export analysis reports',
-    'Team-friendly dashboard',
-  ];
+const STATS = [
+  { value: '10K+', label: 'Code Reviews', color: '#06b6d4' },
+  { value: '98%', label: 'Accuracy Rate', color: '#8b5cf6' },
+  { value: '< 5s', label: 'Avg Analysis', color: '#ec4899' },
+  { value: '12+', label: 'Languages', color: '#f59e0b' },
+];
+
+const CODE_LINES = [
+  { prefix: '01', content: 'function processPayment(amount, user) {', color: '#67e8f9' },
+  { prefix: '02', content: '  const query = `SELECT * FROM users', color: '#e2e8f0' },
+  { prefix: '03', content: '    WHERE id = ${user.id}`;', color: '#fca5a5', warn: true },
+  { prefix: '04', content: '  db.execute(query);', color: '#fca5a5', warn: true },
+  { prefix: '05', content: '}', color: '#67e8f9' },
+];
+
+const ISSUES_DEMO = [
+  { sev: 'critical', label: 'SQL Injection', line: 3 },
+  { sev: 'high', label: 'Unvalidated Input', line: 4 },
+  { sev: 'medium', label: 'Missing Auth Check', line: 1 },
+];
+
+// Particle component
+const Particle: React.FC<{ style: React.CSSProperties }> = ({ style }) => (
+  <div
+    className="absolute w-1 h-1 rounded-full bg-cyan-400/60"
+    style={{ animation: 'particle-drift 4s ease-out infinite', ...style }}
+  />
+);
+
+export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
+  const [navScrolled, setNavScrolled] = useState(false);
+  const heroRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onScroll = () => setNavScrolled(window.scrollY > 40);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const particles = Array.from({ length: 14 }, (_, i) => ({
+    style: {
+      left: `${(i * 7.3) % 100}%`,
+      top: `${(i * 13.7) % 80}%`,
+      animationDelay: `${i * 0.31}s`,
+      animationDuration: `${3 + (i % 3)}s`,
+    },
+  }));
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white overflow-hidden">
-      {/* Navigation Bar */}
-      <nav className="fixed top-0 w-full bg-black/20 backdrop-blur-md border-b border-white/10 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <div className="flex items-center space-x-2">
-            <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <Code className="w-6 h-6 text-white" />
+    <div className="min-h-screen overflow-x-hidden" style={{ background: '#040d1a', color: '#f1f5f9' }}>
+
+      {/* ── Navigation ──────────────────────────────── */}
+      <nav
+        className="fixed top-0 w-full z-50 transition-all duration-300"
+        style={{
+          background: navScrolled ? 'rgba(4,13,26,0.85)' : 'transparent',
+          backdropFilter: navScrolled ? 'blur(24px)' : 'none',
+          borderBottom: navScrolled ? '1px solid rgba(255,255,255,0.06)' : 'none',
+        }}
+      >
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+          {/* Logo */}
+          <div className="flex items-center gap-3">
+            <div className="relative w-9 h-9">
+              <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-cyan-500 to-violet-600 opacity-20 blur-sm" />
+              <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
+                <Cpu className="w-5 h-5 text-white" />
+              </div>
             </div>
-            <span className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-              Intellicode
-            </span>
+            <span className="text-xl font-bold tracking-tight text-aurora">Intellicode</span>
           </div>
+
+          {/* Nav links */}
+          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+            {['Features', 'How it Works', 'Pricing'].map(l => (
+              <a key={l} href="#" className="hover:text-white transition-colors duration-200">{l}</a>
+            ))}
+          </div>
+
+          {/* CTA */}
           <button
             onClick={onGetStarted}
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition-colors"
+            className="btn-glow relative px-5 py-2.5 rounded-xl text-sm font-semibold text-white"
+            style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
           >
-            Sign In
+            <span className="relative z-10">Sign In →</span>
           </button>
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            {/* Hero Content */}
-            <div className="space-y-8">
-              <div className="space-y-4">
-                <div className="inline-block">
-                  <span className="text-sm font-semibold text-blue-400 bg-blue-500/10 px-4 py-2 rounded-full border border-blue-500/20">
-                    ✨ AI-Powered Code Intelligence
-                  </span>
-                </div>
-                <h1 className="text-5xl sm:text-6xl font-bold leading-tight">
-                  Write Better Code with{' '}
-                  <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                    Intellicode
-                  </span>
-                </h1>
-                <p className="text-xl text-gray-300 leading-relaxed">
-                  Transform your code quality with AI-powered analysis. Get instant feedback, security insights, and actionable recommendations to improve your codebase.
-                </p>
-              </div>
+      {/* ── Hero ────────────────────────────────────── */}
+      <section ref={heroRef} className="relative min-h-screen flex items-center pt-20 overflow-hidden">
 
-              <div className="flex flex-col sm:flex-row gap-4">
-                <button
-                  onClick={onGetStarted}
-                  className="group px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-xl font-semibold text-lg transition-all transform hover:scale-105 flex items-center justify-center space-x-2 shadow-lg hover:shadow-blue-500/50"
-                >
-                  <span>Get Started Free</span>
-                  <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                </button>
-                <button className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl font-semibold text-lg transition-all">
-                  Watch Demo
-                </button>
-              </div>
+        {/* Ambient blobs */}
+        <div className="blob w-[600px] h-[600px] top-[-100px] left-[-200px]"
+          style={{ background: 'radial-gradient(circle, rgba(6,182,212,0.12), transparent 70%)' }} />
+        <div className="blob w-[500px] h-[500px] bottom-[-150px] right-[-100px]"
+          style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.12), transparent 70%)' }} />
 
-              {/* Stats */}
-              <div className="grid grid-cols-3 gap-6 pt-8">
-                <div>
-                  <div className="text-3xl font-bold text-blue-400">10K+</div>
-                  <p className="text-gray-400 text-sm">Code Reviews</p>
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-purple-400">98%</div>
-                  <p className="text-gray-400 text-sm">Accuracy Rate</p>
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-pink-400">500+</div>
-                  <p className="text-gray-400 text-sm">Active Users</p>
-                </div>
-              </div>
+        {/* Dot grid */}
+        <div className="dot-grid absolute inset-0 opacity-40" />
+
+        {/* Floating particles */}
+        {particles.map((p, i) => <Particle key={i} style={p.style} />)}
+
+        <div className="relative max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center py-20">
+
+          {/* Left copy */}
+          <div className="space-y-8">
+            <div className="animate-slide-up">
+              <span className="tag neon-border text-cyan-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                GPT-4o-mini Powered
+              </span>
             </div>
 
-            {/* Hero Visual */}
-            <div className="relative hidden lg:block">
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 rounded-3xl blur-3xl"></div>
-              <div className="relative bg-slate-800/50 backdrop-blur border border-white/10 rounded-2xl p-6 space-y-4">
-                <div className="flex space-x-2">
-                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
+            <h1 className="animate-slide-up delay-100 text-5xl sm:text-6xl font-extrabold leading-tight tracking-tight hero-title">
+              Write{' '}
+              <span className="text-aurora">Smarter</span>
+              {' '}Code,{' '}
+              <br />Ship{' '}
+              <span className="text-aurora">Faster</span>
+            </h1>
+
+            <p className="animate-slide-up delay-200 text-lg text-slate-400 leading-relaxed max-w-lg">
+              Intellicode AI reviews your code in under 5 seconds — spotting security flaws,
+              performance bottlenecks, and logic bugs. Then fixes them automatically.
+            </p>
+
+            <div className="animate-slide-up delay-300 flex flex-col sm:flex-row gap-4">
+              <button
+                onClick={onGetStarted}
+                className="btn-glow group relative px-8 py-4 rounded-xl text-base font-semibold text-white flex items-center justify-center gap-2"
+                style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
+              >
+                Start Free Analysis
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </button>
+              <button className="glass glass-hover px-8 py-4 rounded-xl text-base font-semibold text-slate-300 flex items-center justify-center gap-2">
+                <Terminal className="w-4 h-4 text-cyan-400" />
+                View Live Demo
+              </button>
+            </div>
+
+            {/* Stats row */}
+            <div className="animate-slide-up delay-400 grid grid-cols-2 sm:grid-cols-4 gap-6 pt-6 border-t border-white/5">
+              {STATS.map((s) => (
+                <div key={s.label} className="space-y-1">
+                  <div className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</div>
+                  <div className="text-xs text-slate-500 font-medium">{s.label}</div>
                 </div>
-                <div className="space-y-2 font-mono text-sm text-gray-300">
-                  <div className="text-blue-400">{'function analyzeCode() {'}</div>
-                  <div className="ml-4 text-purple-400">{'// AI-powered analysis'}</div>
-                  <div className="ml-4 text-green-400">{'return insights'}</div>
-                  <div className="text-blue-400">{'}'}</div>
-                </div>
-                <div className="pt-4 border-t border-white/10">
-                  <div className="flex items-center space-x-2">
-                    <Check className="w-5 h-5 text-green-400" />
-                    <span className="text-green-400">Analysis Complete</span>
+              ))}
+            </div>
+          </div>
+
+          {/* Right: Live code preview card */}
+          <div className="animate-float hidden lg:block">
+            <div className="relative">
+              {/* Glow behind card */}
+              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 to-violet-500/10 rounded-3xl blur-2xl" />
+
+              <div className="relative glass rounded-2xl overflow-hidden scanlines">
+                {/* Card header */}
+                <div className="flex items-center gap-2 px-5 py-3 border-b border-white/5"
+                  style={{ background: 'rgba(0,0,0,0.3)' }}>
+                  <div className="flex gap-1.5">
+                    <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                    <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
+                    <div className="w-3 h-3 rounded-full bg-green-500/80" />
                   </div>
-                  <div className="mt-3 space-y-2 text-sm text-gray-400">
-                    <div>✓ 0 Critical Issues</div>
-                    <div>✓ 2 Medium Issues</div>
-                    <div>✓ Quality Score: 92/100</div>
+                  <span className="ml-2 text-xs text-slate-500 font-mono">payment.js — Intellicode Analysis</span>
+                </div>
+
+                {/* Code area */}
+                <div className="p-5 font-mono text-sm">
+                  {CODE_LINES.map((line) => (
+                    <div key={line.prefix}
+                      className="flex items-start gap-4 py-0.5 rounded px-1"
+                      style={line.warn ? { background: 'rgba(239,68,68,0.08)' } : {}}>
+                      <span className="line-number">{line.prefix}</span>
+                      <span style={{ color: line.color }}>{line.content}</span>
+                      {line.warn && (
+                        <span className="ml-auto text-red-400 text-xs flex-shrink-0">⚠ SQL Injection</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Issues panel */}
+                <div className="border-t border-white/5 p-4 space-y-2"
+                  style={{ background: 'rgba(0,0,0,0.2)' }}>
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <BarChart3 className="w-3 h-3 text-cyan-400" />
+                    Issues Found
+                  </div>
+                  {ISSUES_DEMO.map((issue) => (
+                    <div key={issue.label}
+                      className="flex items-center justify-between rounded-lg px-3 py-2"
+                      style={{ background: 'rgba(255,255,255,0.03)' }}>
+                      <div className="flex items-center gap-2">
+                        <span className={`badge-${issue.sev} tag text-xs`}>{issue.sev}</span>
+                        <span className="text-sm text-slate-300">{issue.label}</span>
+                      </div>
+                      <span className="text-xs text-slate-500 font-mono">L{issue.line}</span>
+                    </div>
+                  ))}
+
+                  {/* Score */}
+                  <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between">
+                    <span className="text-sm text-slate-400">Health Score</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-24 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                        <div className="h-full w-2/5 rounded-full bg-gradient-to-r from-red-500 to-orange-500" />
+                      </div>
+                      <span className="text-sm font-bold text-orange-400">42/100</span>
+                    </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Floating badge */}
+              <div className="absolute -top-4 -right-4 glass neon-border rounded-xl px-4 py-2 flex items-center gap-2 shadow-xl">
+                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                <span className="text-xs font-semibold text-green-400">Auto-Fix Ready</span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-black/30">
+      {/* ── Features ────────────────────────────────── */}
+      <section id="features" className="py-28 px-6 relative">
+        <div className="blob w-[400px] h-[400px] top-20 right-20"
+          style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.08), transparent 70%)' }} />
+
         <div className="max-w-7xl mx-auto">
-          <div className="text-center space-y-4 mb-16">
-            <h2 className="text-4xl sm:text-5xl font-bold">
-              Powerful Features for Modern Development
+          <div className="text-center space-y-4 mb-20">
+            <div className="tag neon-border text-violet-400 mx-auto inline-flex">Core Capabilities</div>
+            <h2 className="text-4xl sm:text-5xl font-extrabold">
+              Everything your code{' '}
+              <span className="text-aurora">needs</span>
             </h2>
-            <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-              Everything you need to write better, more secure, and more maintainable code.
+            <p className="text-slate-400 max-w-xl mx-auto text-lg">
+              A full-stack intelligence platform built for professional developers who ship fast and break nothing.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {features.map((feature, index) => {
-              const Icon = feature.icon;
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+            {FEATURES.map((f) => {
+              const Icon = f.icon;
               return (
                 <div
-                  key={index}
-                  className="group bg-slate-800/50 backdrop-blur border border-white/10 hover:border-blue-500/50 rounded-2xl p-8 transition-all hover:bg-slate-800/80 hover:shadow-lg hover:shadow-blue-500/10 transform hover:-translate-y-2"
+                  key={f.title}
+                  className="glass glass-hover feature-card rounded-2xl p-6 space-y-4 relative overflow-hidden"
                 >
-                  <div className="w-12 h-12 bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:from-blue-600 group-hover:to-purple-600 transition-colors">
-                    <Icon className="w-6 h-6 text-blue-400" />
+                  {/* Top gradient accent */}
+                  <div className="absolute top-0 left-0 right-0 h-px"
+                    style={{ background: `linear-gradient(90deg, transparent, ${f.border}, transparent)` }} />
+
+                  <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${f.gradient} flex items-center justify-center`}
+                    style={{ border: `1px solid ${f.border}` }}>
+                    <Icon className="w-5 h-5" style={{ color: f.border.replace('0.3', '1').replace('a)', ')') }} />
                   </div>
-                  <h3 className="text-xl font-semibold mb-3">{feature.title}</h3>
-                  <p className="text-gray-400 leading-relaxed">{feature.description}</p>
+
+                  <div>
+                    <h3 className="text-base font-bold mb-2">{f.title}</h3>
+                    <p className="text-sm text-slate-400 leading-relaxed">{f.description}</p>
+                  </div>
+
+                  {/* Bottom glow */}
+                  <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none"
+                    style={{ background: `radial-gradient(ellipse at 50% 100%, ${f.glow}, transparent)` }} />
                 </div>
               );
             })}
@@ -177,131 +323,231 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
         </div>
       </section>
 
-      {/* Benefits Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <div className="space-y-8">
-              <h2 className="text-4xl sm:text-5xl font-bold">
-                Why Choose Intellicode?
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {benefits.map((benefit, index) => (
-                  <div key={index} className="flex items-start space-x-4">
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0 mt-1">
-                      <Check className="w-4 h-4 text-white" />
+      {/* ── How It Works ────────────────────────────── */}
+      <section className="py-28 px-6 relative" style={{ background: 'rgba(255,255,255,0.01)' }}>
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center space-y-4 mb-20">
+            <div className="tag neon-border text-cyan-400 mx-auto inline-flex">How it Works</div>
+            <h2 className="text-4xl sm:text-5xl font-extrabold">
+              Analysis in <span className="text-aurora">3 steps</span>
+            </h2>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                step: '01',
+                icon: Code2,
+                title: 'Paste Your Code',
+                desc: 'Drop in a snippet or point to a GitHub repo URL. Any language, any size.',
+                color: '#06b6d4',
+              },
+              {
+                step: '02',
+                icon: Cpu,
+                title: 'AI Reviews Instantly',
+                desc: 'GPT-4o-mini scans for security, performance, and logic issues in under 5 seconds.',
+                color: '#8b5cf6',
+              },
+              {
+                step: '03',
+                icon: Zap,
+                title: 'Fix with One Click',
+                desc: 'Auto-Fix patches every issue, then re-analyzes to prove the score improved.',
+                color: '#ec4899',
+              },
+            ].map((s, i) => {
+              const Icon = s.icon;
+              return (
+                <div key={s.step} className="relative group">
+                  {/* Connector line */}
+                  {i < 2 && (
+                    <div className="hidden md:block absolute top-8 left-full w-full h-px z-10"
+                      style={{
+                        background: 'linear-gradient(90deg, rgba(6,182,212,0.4), rgba(6,182,212,0.05))',
+                        width: 'calc(100% - 4rem)',
+                        marginLeft: '2rem',
+                      }} />
+                  )}
+                  <div className="glass glass-hover rounded-2xl p-8 space-y-4 text-center">
+                    <div className="relative w-16 h-16 mx-auto">
+                      <div className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                        style={{ background: `radial-gradient(circle, ${s.color}20, transparent)` }} />
+                      <div className="w-16 h-16 rounded-full flex items-center justify-center"
+                        style={{ background: `${s.color}15`, border: `1px solid ${s.color}40` }}>
+                        <Icon className="w-7 h-7" style={{ color: s.color }} />
+                      </div>
+                      <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center"
+                        style={{ background: s.color, color: '#040d1a' }}>{s.step}</div>
                     </div>
-                    <span className="text-lg text-gray-300">{benefit}</span>
+                    <h3 className="text-lg font-bold">{s.title}</h3>
+                    <p className="text-sm text-slate-400 leading-relaxed">{s.desc}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Benefits ────────────────────────────────── */}
+      <section className="py-28 px-6">
+        <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-16 items-center">
+          <div className="space-y-8">
+            <div>
+              <div className="tag neon-border text-pink-400 mb-6 inline-flex">Why Teams Choose Us</div>
+              <h2 className="text-4xl sm:text-5xl font-extrabold leading-tight">
+                Built for modern{' '}
+                <span className="text-aurora">developer teams</span>
+              </h2>
+            </div>
+
+            <div className="space-y-4">
+              {[
+                { icon: Lock, text: 'Enterprise-grade security scanning (OWASP Top-10)' },
+                { icon: Zap, text: 'Sub-5-second analysis with GPT-4o-mini' },
+                { icon: BarChart3, text: 'Real-time quality metrics with visual progress bars' },
+                { icon: GitBranch, text: 'GitHub repo analysis — any public repository' },
+                { icon: Terminal, text: 'Collaborative sessions for live team code review' },
+                { icon: CheckCircle2, text: 'Auto-Fix with automatic re-analysis verification' },
+              ].map((b, i) => {
+                const Icon = b.icon;
+                return (
+                  <div key={i} className="glass glass-hover rounded-xl px-4 py-3 flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{ background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.2)' }}>
+                      <Icon className="w-4 h-4 text-cyan-400" />
+                    </div>
+                    <span className="text-sm text-slate-300">{b.text}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Metrics card */}
+          <div className="relative">
+            <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 to-cyan-500/10 rounded-3xl blur-2xl" />
+            <div className="relative glass rounded-2xl p-8 space-y-6">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Sample Analysis</span>
+                <span className="tag badge-low">Score: 91/100</span>
+              </div>
+
+              {[
+                { label: 'Security', val: 95, color: '#06b6d4' },
+                { label: 'Performance', val: 87, color: '#8b5cf6' },
+                { label: 'Maintainability', val: 90, color: '#ec4899' },
+                { label: 'Readability', val: 92, color: '#f59e0b' },
+              ].map((m) => (
+                <div key={m.label} className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-400">{m.label}</span>
+                    <span className="text-sm font-bold" style={{ color: m.color }}>{m.val}/100</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/5 overflow-hidden progress-bar">
+                    <div className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${m.val}%`, background: `linear-gradient(90deg, ${m.color}80, ${m.color})` }} />
+                  </div>
+                </div>
+              ))}
+
+              <div className="pt-4 border-t border-white/5 grid grid-cols-3 gap-4">
+                {[
+                  { label: 'Issues', val: '3', color: '#fbbf24' },
+                  { label: 'Smells', val: '1', color: '#06b6d4' },
+                  { label: 'Debt', val: 'Low', color: '#4ade80' },
+                ].map((s) => (
+                  <div key={s.label} className="text-center">
+                    <div className="text-xl font-bold" style={{ color: s.color }}>{s.val}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
                   </div>
                 ))}
               </div>
             </div>
-
-            <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 rounded-3xl blur-3xl"></div>
-              <div className="relative bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur border border-white/10 rounded-2xl p-8 space-y-6">
-                <div className="space-y-2">
-                  <div className="w-full h-2 bg-gradient-to-r from-blue-500/20 to-transparent rounded-full"></div>
-                  <div className="text-sm text-gray-400">Code Quality</div>
-                  <div className="text-3xl font-bold text-blue-400">92/100</div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="w-4/5 h-2 bg-gradient-to-r from-purple-500/20 to-transparent rounded-full"></div>
-                  <div className="text-sm text-gray-400">Performance</div>
-                  <div className="text-3xl font-bold text-purple-400">87/100</div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="w-3/5 h-2 bg-gradient-to-r from-pink-500/20 to-transparent rounded-full"></div>
-                  <div className="text-sm text-gray-400">Security</div>
-                  <div className="text-3xl font-bold text-pink-400">95/100</div>
-                </div>
-
-                <div className="pt-6 border-t border-white/10">
-                  <p className="text-gray-400 text-sm">Last analysis: 2 minutes ago</p>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="relative bg-gradient-to-r from-blue-600/20 via-purple-600/20 to-pink-600/20 border border-white/20 rounded-3xl p-12 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 opacity-10 blur-3xl"></div>
-            <div className="relative space-y-8 text-center">
-              <h2 className="text-4xl sm:text-5xl font-bold">
-                Ready to Improve Your Code?
+      {/* ── CTA ─────────────────────────────────────── */}
+      <section className="py-28 px-6">
+        <div className="max-w-3xl mx-auto">
+          <div className="relative rounded-3xl overflow-hidden">
+            {/* Animated bg */}
+            <div className="absolute inset-0"
+              style={{
+                background: 'linear-gradient(135deg, rgba(6,182,212,0.15), rgba(139,92,246,0.15), rgba(236,72,153,0.1))',
+                backgroundSize: '300% 300%',
+                animation: 'aurora 6s ease infinite',
+              }} />
+            <div className="absolute inset-0 border border-white/10 rounded-3xl" />
+
+            <div className="relative p-12 sm:p-16 text-center space-y-8">
+              <h2 className="text-4xl sm:text-5xl font-extrabold">
+                Ready to write{' '}
+                <span className="text-aurora">better</span>{' '}
+                code?
               </h2>
-              <p className="text-xl text-gray-300 max-w-2xl mx-auto">
-                Join thousands of developers using Intellicode to write better, more secure code. Start your free analysis today.
+              <p className="text-slate-300 text-lg max-w-xl mx-auto">
+                Join thousands of developers who ship faster, safer code with Intellicode.
+                Free to start — no credit card required.
               </p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+              <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <button
                   onClick={onGetStarted}
-                  className="px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-xl font-semibold text-lg transition-all transform hover:scale-105 shadow-lg hover:shadow-blue-500/50"
+                  className="btn-glow group px-10 py-4 rounded-xl font-bold text-base text-white flex items-center justify-center gap-2"
+                  style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
                 >
                   Get Started Free
+                  <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 </button>
-                <button className="px-8 py-4 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl font-semibold text-lg transition-all">
+                <button className="glass glass-hover px-10 py-4 rounded-xl font-semibold text-slate-300 text-base">
                   Learn More
                 </button>
               </div>
-              <p className="text-gray-400 text-sm">
-                No credit card required. Start analyzing in seconds.
-              </p>
+              <p className="text-slate-500 text-sm">No credit card • Instant analysis • Cancel anytime</p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-white/10 py-12 px-4 sm:px-6 lg:px-8">
+      {/* ── Footer ──────────────────────────────────── */}
+      <footer className="border-t border-white/5 py-16 px-6">
         <div className="max-w-7xl mx-auto">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
-            <div>
-              <div className="flex items-center space-x-2 mb-4">
-                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                  <Code className="w-5 h-5 text-white" />
+          <div className="grid md:grid-cols-4 gap-10 mb-12">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
+                  <Cpu className="w-4 h-4 text-white" />
                 </div>
-                <span className="font-bold">Intellicode</span>
+                <span className="font-bold text-aurora">Intellicode</span>
               </div>
-              <p className="text-gray-400 text-sm">AI-powered code analysis for modern development.</p>
+              <p className="text-slate-500 text-sm leading-relaxed">AI-powered code intelligence for modern development teams.</p>
             </div>
-            <div>
-              <h4 className="font-semibold mb-4">Product</h4>
-              <ul className="space-y-2 text-gray-400 text-sm">
-                <li><a href="#" className="hover:text-white transition">Features</a></li>
-                <li><a href="#" className="hover:text-white transition">Pricing</a></li>
-                <li><a href="#" className="hover:text-white transition">FAQ</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold mb-4">Company</h4>
-              <ul className="space-y-2 text-gray-400 text-sm">
-                <li><a href="#" className="hover:text-white transition">About</a></li>
-                <li><a href="#" className="hover:text-white transition">Blog</a></li>
-                <li><a href="#" className="hover:text-white transition">Contact</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold mb-4">Legal</h4>
-              <ul className="space-y-2 text-gray-400 text-sm">
-                <li><a href="#" className="hover:text-white transition">Privacy</a></li>
-                <li><a href="#" className="hover:text-white transition">Terms</a></li>
-                <li><a href="#" className="hover:text-white transition">Security</a></li>
-              </ul>
-            </div>
+            {[
+              { title: 'Product', links: ['Features', 'Pricing', 'Changelog', 'FAQ'] },
+              { title: 'Company', links: ['About', 'Blog', 'Careers', 'Contact'] },
+              { title: 'Legal', links: ['Privacy', 'Terms', 'Security', 'Cookies'] },
+            ].map((col) => (
+              <div key={col.title}>
+                <h4 className="text-sm font-semibold text-white mb-4 uppercase tracking-wider">{col.title}</h4>
+                <ul className="space-y-2">
+                  {col.links.map((l) => (
+                    <li key={l}>
+                      <a href="#" className="text-sm text-slate-500 hover:text-slate-300 transition-colors">{l}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
-          <div className="border-t border-white/10 pt-8 flex flex-col sm:flex-row justify-between items-center text-gray-400 text-sm">
-            <p>&copy; 2026 Intellicode. All rights reserved.</p>
-            <div className="flex space-x-6 mt-4 sm:mt-0">
-              <a href="#" className="hover:text-white transition">Twitter</a>
-              <a href="#" className="hover:text-white transition">GitHub</a>
-              <a href="#" className="hover:text-white transition">LinkedIn</a>
+
+          <div className="border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-600">
+            <span>© 2026 Intellicode · MKU Final Project. All rights reserved.</span>
+            <div className="flex gap-6">
+              {['Twitter', 'GitHub', 'LinkedIn'].map((s) => (
+                <a key={s} href="#" className="hover:text-slate-300 transition-colors">{s}</a>
+              ))}
             </div>
           </div>
         </div>

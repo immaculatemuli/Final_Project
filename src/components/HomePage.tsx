@@ -4,7 +4,7 @@ import { auth, db } from '../firebase';
 import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc, limit } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Star, Share2, Clock, AlertTriangle, Code, XCircle, Copy, ArrowLeftRight } from 'lucide-react';
+import { Cpu, History, Bookmark, Copy, ArrowLeftRight, GitBranch, Code2, ChevronRight, LogOut, User as UserIcon } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import { analyzeCodeWithAI, fixCodeWithAI } from '../services/aiAnalysis';
 
@@ -414,126 +414,173 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     }
   }, [code, originalCode, viewMode, wasAutoFixed, collabSessionId]);
 
+  /* ── Render ─────────────────────────────────────── */
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col">
-      {/* Auto-fix success banner */}
+    <div className="min-h-screen flex flex-col" style={{ background: '#040d1a', color: '#f1f5f9' }}>
+
+      {/* Auto-fix banner */}
       {autoFixMessage && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl text-white text-sm font-medium flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-green-600 animate-pulse">
-          <span>{autoFixMessage}</span>
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl text-white text-sm font-semibold flex items-center gap-3"
+          style={{ background: 'linear-gradient(135deg, #059669, #10b981)', boxShadow: '0 8px 32px rgba(16,185,129,0.3)' }}>
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          {autoFixMessage}
         </div>
       )}
-      <header className="bg-black/20 backdrop-blur-md border-b border-white/10 py-4 px-8 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-            <Star className="w-6 h-6 text-white" />
+
+      {/* ── Header / Nav ─────────────────────────────── */}
+      <header className="nav-bar sticky top-0 z-40 px-6 py-3 flex items-center justify-between gap-4">
+        {/* Logo */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+            <Cpu className="w-4 h-4 text-white" />
           </div>
-          <span className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Intellicode</span>
+          <span className="text-lg font-extrabold text-aurora hidden sm:block">Intellicode</span>
         </div>
-        <button
-          onClick={handleSignOut}
-          className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-2 rounded-lg font-medium transition-all transform hover:scale-105 shadow-md"
-        >
-          Sign Out
-        </button>
+
+        {/* Nav pills */}
+        <nav className="flex items-center gap-1">
+          {[
+            { label: 'History', view: 'history' as const, icon: History },
+            { label: 'Snippets', view: 'snippets' as const, icon: Bookmark },
+          ].map(({ label, view, icon: Icon }) => (
+            <button
+              key={view}
+              onClick={() => onNavigate?.(view as any)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200"
+              style={{
+                background: 'transparent',
+                color: '#94a3b8',
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.color = '#f1f5f9')}
+              onMouseOut={(e) => (e.currentTarget.style.color = '#94a3b8')}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {/* User info + sign out */}
+        <div className="flex items-center gap-3">
+          {user.photoURL ? (
+            <img src={user.photoURL} alt={user.displayName || 'User'}
+              className="w-7 h-7 rounded-full ring-2 ring-cyan-500/40" />
+          ) : (
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
+              <UserIcon className="w-3.5 h-3.5 text-white" />
+            </div>
+          )}
+          <span className="hidden md:block text-sm text-slate-400 truncate max-w-[140px]">
+            {user.displayName || user.email}
+          </span>
+          <button
+            onClick={handleSignOut}
+            className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-colors"
+            title="Sign Out"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </header>
-      <main className="flex-1 flex flex-col md:flex-row gap-8 p-8">
-        <section className="flex-1 bg-slate-800/50 backdrop-blur border border-white/10 rounded-2xl shadow-lg p-6 flex flex-col">
-          <div className="mb-4 flex flex-col space-y-3">
-            <div className="flex space-x-2">
+
+      {/* ── Main content ─────────────────────────────── */}
+      <main className="flex-1 flex flex-col md:flex-row gap-5 p-5 lg:p-6">
+
+        {/* ── Left: Code Editor panel ─────────────────── */}
+        <section className="flex-1 glass rounded-2xl flex flex-col overflow-hidden"
+          style={{ minHeight: 0, border: '1px solid rgba(255,255,255,0.07)' }}>
+
+          {/* Panel header */}
+          <div className="px-5 py-3 border-b flex items-center gap-3 flex-wrap"
+            style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.2)' }}>
+
+            {/* Mode toggle */}
+            <div className="flex items-center gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)' }}>
               <button
                 onClick={() => setAnalysisMode('code')}
-                className={`px-4 py-2 rounded-lg font-medium transition ${analysisMode === 'code'
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
-                  : 'bg-slate-700/50 text-gray-300 hover:bg-slate-700 border border-slate-600/50'
-                  }`}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
+                style={analysisMode === 'code'
+                  ? { background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)', color: '#fff' }
+                  : { color: '#64748b' }
+                }
               >
-                Code Snippet
-              </button>
-              <button
-                onClick={() => setAnalysisMode('github')}
-                className={`px-4 py-2 rounded-lg font-medium transition ${analysisMode === 'github'
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
-                  : 'bg-slate-700/50 text-gray-300 hover:bg-slate-700 border border-slate-600/50'
-                  }`}
-              >
-                GitHub Repository
+                <Code2 className="w-3 h-3" /> Code Snippet
               </button>
             </div>
 
-            {/* Collaborative session controls */}
-            <div className="mt-1 bg-slate-900/40 border border-slate-700/70 rounded-lg p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-              <div className="text-xs text-gray-300">
-                {collabSessionId ? (
-                  <>
-                    Collaborative session ID:&nbsp;
-                    <span className="font-mono bg-slate-800 px-2 py-0.5 rounded border border-slate-600 select-all">
-                      {collabSessionId}
-                    </span>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(collabSessionId);
-                        alert('Session ID copied!');
-                      }}
-                      className="ml-2 text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-white"
-                      title="Copy Session ID"
-                    >
-                      <Copy className="w-3 h-3" />
-                    </button>
-                  </>
-                ) : (
-                  'Start or join a collaborative review session to share code and analysis in real time.'
-                )}
-              </div>
-              <div className="flex items-center gap-2">
+            {/* View mode toggle (only when auto-fixed) */}
+            {originalCode && wasAutoFixed && (
+              <div className="ml-auto flex items-center gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)' }}>
                 <button
-                  onClick={handleStartCollabSession}
-                  className="px-3 py-1 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+                  onClick={() => setViewMode('editor')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                  style={viewMode === 'editor'
+                    ? { background: 'rgba(6,182,212,0.2)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.3)' }
+                    : { color: '#64748b' }
+                  }
                 >
-                  Start Session
+                  Editor
                 </button>
-                <input
-                  type="text"
-                  value={joinSessionInput}
-                  onChange={(e) => setJoinSessionInput(e.target.value)}
-                  placeholder="Session ID"
-                  className="px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded-md text-gray-100 placeholder-gray-500"
-                />
                 <button
-                  onClick={() => handleJoinSession(joinSessionInput)}
-                  className="px-3 py-1 text-xs rounded-md bg-slate-700 hover:bg-slate-600 text-white font-medium"
+                  onClick={() => setViewMode('diff')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                  style={viewMode === 'diff'
+                    ? { background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }
+                    : { color: '#64748b' }
+                  }
                 >
-                  Join
+                  <ArrowLeftRight className="w-3 h-3" /> Diff
                 </button>
               </div>
+            )}
+
+            {/* Collab session */}
+            <div className="ml-auto flex items-center gap-2">
+              {collabSessionId ? (
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                  <span className="text-xs text-slate-400 font-mono">{collabSessionId}</span>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(collabSessionId); }}
+                    className="p-1 text-slate-500 hover:text-slate-300 transition-colors"
+                    title="Copy session ID"
+                  >
+                    <Copy className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleStartCollabSession}
+                    className="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
+                    style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)' }}
+                  >
+                    + Session
+                  </button>
+                  <input
+                    type="text"
+                    value={joinSessionInput}
+                    onChange={(e) => setJoinSessionInput(e.target.value)}
+                    placeholder="Session ID"
+                    className="text-xs px-2 py-1 rounded-lg w-28"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#f1f5f9', outline: 'none' }}
+                  />
+                  <button
+                    onClick={() => handleJoinSession(joinSessionInput)}
+                    className="px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all"
+                    style={{ background: 'rgba(255,255,255,0.05)' }}
+                  >
+                    Join
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
-          {analysisMode === 'code' ? (
-            <>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-white">
-                  {viewMode === 'editor' ? 'Paste Your Code' : 'Review Transformation'}
-                </h2>
-                {originalCode && wasAutoFixed && (
-                  <div className="flex bg-slate-700/50 rounded-lg p-1 border border-white/10">
-                    <button
-                      onClick={() => setViewMode('editor')}
-                      className={`px-3 py-1 text-xs rounded-md transition-all ${viewMode === 'editor' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                    >
-                      View Editor
-                    </button>
-                    <button
-                      onClick={() => setViewMode('diff')}
-                      className={`px-3 py-1 text-xs rounded-md transition-all ${viewMode === 'diff' ? 'bg-emerald-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                    >
-                      <ArrowLeftRight className="w-3 h-3 inline mr-1" />
-                      View Diff
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {viewMode === 'editor' ? (
+          {/* Editor / GitHub input / Diff viewer */}
+          <div className="flex-1 overflow-auto p-4">
+            {analysisMode === 'code' ? (
+              viewMode === 'editor' ? (
                 <CodeInput
                   onAnalyze={analyzeCode}
                   isAnalyzing={isAnalyzing}
@@ -541,132 +588,62 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                   setCode={setCode}
                   targetLine={targetLine}
                   onLineNavigated={() => setTargetLine(null)}
-                  issues={analysis?.issues}
                 />
               ) : (
                 <DiffViewer original={originalCode || ''} modified={code} />
-              )}
-            </>
-          ) : (
-            <>
-              <h2 className="text-xl font-semibold text-white mb-4">Analyze GitHub Repository</h2>
-              <div className="flex flex-col space-y-4">
-                <input
-                  type="text"
-                  value={githubRepoUrl}
-                  onChange={(e) => setGithubRepoUrl(e.target.value)}
-                  placeholder="https://github.com/owner/repository"
-                  className="px-4 py-3 bg-slate-700/50 text-white border border-white/10 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                  disabled={isAnalyzing}
-                />
-                <button
-                  onClick={() => analyzeGithubRepo(githubRepoUrl)}
-                  disabled={isAnalyzing || !githubRepoUrl}
-                  className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-3 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium shadow-md transform hover:scale-105"
-                >
-                  {isAnalyzing ? 'Analyzing Repository...' : 'Analyze Repository'}
-                </button>
-                <p className="text-gray-400 text-sm">
-                  Enter a public GitHub repository URL. The system will analyze code files from the repository root.
+              )
+            ) : (
+              /* GitHub repo input */
+              <div className="space-y-4 p-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                    <GitBranch className="w-4 h-4 text-cyan-400" />
+                    GitHub Repository URL
+                  </label>
+                  <div className="flex gap-3">
+                    <input
+                      type="url"
+                      value={githubRepoUrl}
+                      onChange={(e) => setGithubRepoUrl(e.target.value)}
+                      placeholder="https://github.com/owner/repo"
+                      className="input-field flex-1 font-mono text-sm"
+                    />
+                    <button
+                      onClick={() => analyzeGithubRepo(githubRepoUrl)}
+                      disabled={isAnalyzing || !githubRepoUrl.trim()}
+                      className="btn-glow px-5 py-2.5 rounded-xl text-sm font-bold text-white flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)', flexShrink: 0 }}
+                    >
+                      {isAnalyzing ? (
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <><ChevronRight className="w-4 h-4" /> Analyze</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Supports any public GitHub repository. We'll analyse top-level code files using GPT-4o-mini.
                 </p>
               </div>
-            </>
-          )}
-          {analysisHistory.length > 0 && (
-            <div className="mt-8">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-200 flex items-center">
-                  <Clock className="w-5 h-5 mr-2" />
-                  Recent Analyses
-                </h3>
-                {onNavigate && (
-                  <button
-                    onClick={() => onNavigate('history')}
-                    className="text-sm text-blue-400 hover:text-blue-300 hover:underline"
-                  >
-                    View Full History
-                  </button>
-                )}
-              </div>
-              <div className="space-y-3 max-h-80 overflow-y-auto">
-                {analysisHistory.slice(0, 10).map((a, i) => (
-                  <div
-                    key={i}
-                    className="bg-slate-800/30 rounded-lg p-4 hover:bg-slate-800/60 transition cursor-pointer border border-white/10 hover:border-blue-500/50"
-                    onClick={() => {
-                      setAnalysis(a);
-                      if (a.codeSnippet) {
-                        setCode(a.codeSnippet);
-                      }
-                    }}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex items-center space-x-2">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${a.overallScore >= 80 ? 'bg-green-600 text-white' :
-                          a.overallScore >= 60 ? 'bg-yellow-600 text-white' :
-                            'bg-red-600 text-white'
-                          }`}>
-                          {a.overallScore}%
-                        </span>
-                        <span className="text-gray-300 font-medium">{a.language}</span>
-                      </div>
-                      <span className="text-xs text-gray-500">
-                        {new Date().toLocaleDateString()}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs text-gray-400">
-                      <div className="flex space-x-3">
-                        <span className="flex items-center">
-                          <AlertTriangle className="w-3 h-3 mr-1" />
-                          {a.summary.totalIssues} issues
-                        </span>
-                        <span className="flex items-center">
-                          <Code className="w-3 h-3 mr-1" />
-                          {a.metrics.linesOfCode} lines
-                        </span>
-                      </div>
-                      {a.repository && (
-                        <span className="text-blue-400 text-xs flex items-center">
-                          <Share2 className="w-3 h-3 mr-1" />
-                          GitHub
-                        </span>
-                      )}
-                    </div>
-
-                    {a.summary.criticalIssues > 0 && (
-                      <div className="mt-2 text-xs text-red-400 flex items-center">
-                        <XCircle className="w-3 h-3 mr-1" />
-                        {a.summary.criticalIssues} critical issues
-                      </div>
-                    )}
-
-                    {a.codeSnippet && (
-                      <div className="mt-2 text-xs text-gray-400 font-mono line-clamp-2">
-                        {a.codeSnippet}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-        <section className="flex-1 bg-slate-800/50 backdrop-blur border border-white/10 rounded-2xl shadow-lg p-6">
-          <div className="lg:col-span-1">
-            <ReviewPanel
-              analysis={analysis}
-              isAnalyzing={isAnalyzing}
-              isFixing={isFixing}
-              onAutoFix={handleAutoFix}
-              sessionId={collabSessionId || currentAnalysisId || ''}
-              onRateIssue={handleRateIssue}
-              onFlagIssue={handleFlagIssue}
-              wasAutoFixed={wasAutoFixed}
-              onIssueClick={(line) => setTargetLine(line)}
-              onSaveSnippet={handleSaveSnippet}
-            />
+            )}
           </div>
+        </section>
+
+        {/* ── Right: Review Panel ─────────────────────── */}
+        <section className="w-full md:w-[420px] lg:w-[460px] flex-shrink-0">
+          <ReviewPanel
+            analysis={analysis}
+            isAnalyzing={isAnalyzing}
+            isFixing={isFixing}
+            onAutoFix={handleAutoFix}
+            sessionId={collabSessionId || currentAnalysisId || ''}
+            onRateIssue={handleRateIssue}
+            onFlagIssue={handleFlagIssue}
+            wasAutoFixed={wasAutoFixed}
+            onIssueClick={(line) => setTargetLine(line)}
+            onSaveSnippet={handleSaveSnippet}
+          />
         </section>
       </main>
     </div>
