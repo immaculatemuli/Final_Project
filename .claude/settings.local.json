@@ -8,7 +8,9 @@
       "Bash(npx tsc:*)",
       "Bash(npm install:*)",
       "Bash(wc:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(ls C:\\\\Users\\\\mulii\\\\MKU_Final-Project/.env* 2>/dev/null; ls C:\\\\Users\\\\mulii\\\\MKU_Final-Project/functions/.env 2>/dev/null)",
+      "Bash(cd \"C:\\\\Users\\\\mulii\\\\MKU_Final-Project\" && npx vite --version 2>&1)"
     ]
   }
 }

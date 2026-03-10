@@ -65,6 +65,13 @@ interface AppAnalysis {
   codeSnippet?: string;
 }
 
+interface GithubFileResult {
+  name: string;
+  content: string;
+  linesOfCode: number;
+  analysis: AppAnalysis;
+}
+
 interface HomePageProps {
   user: User;
   onNavigate?: (view: 'home' | 'history') => void;
@@ -94,6 +101,9 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState(false);
+
+  const [githubFiles, setGithubFiles] = useState<GithubFileResult[]>([]);
+  const [activeGithubFile, setActiveGithubFile] = useState(0);
 
   // Handle restored analysis from history
   useEffect(() => {
@@ -148,38 +158,69 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       const codeFiles = files.filter(f => f.type === 'file' && codeExts.some(ext => (f.name as string).endsWith(ext))).slice(0, 5);
       if (!codeFiles.length) throw new Error('No code files found in repository root');
 
-      const firstFile = codeFiles[0];
-      const fileResp = await fetch(firstFile.download_url as string);
-      const codeContent = await fileResp.text();
-      if (codeContent.length > 60 * 1024) throw new Error(`File ${firstFile.name} is too large (> 60 KB)`);
+      // Analyze each file sequentially
+      const results: GithubFileResult[] = [];
+      for (let i = 0; i < codeFiles.length; i++) {
+        const fileEntry = codeFiles[i];
+        setAutoFixMessage(`Analyzing file ${i + 1} of ${codeFiles.length}…`);
 
-      // Populate editor then analyze
-      setCode(codeContent);
-      const result = await analyzeCodeWithAI(codeContent);
-      const newAnalysis: AppAnalysis = {
-        ...result,
-        repository: {
-          owner, name: repoName, url: trimmedUrl,
-          stars: repoInfo.stargazers_count,
-          forks: repoInfo.forks_count,
-          description: repoInfo.description,
-          language: repoInfo.language,
-          analyzedFile: firstFile.name,
-          totalFilesFound: codeFiles.length,
-        },
-        codeSnippet: codeContent,
-      };
+        const fileResp = await fetch(fileEntry.download_url as string);
+        const codeContent = await fileResp.text();
 
-      setAnalysis(newAnalysis);
-      setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
+        // Skip files larger than 60KB
+        if (codeContent.length > 60 * 1024) continue;
+
+        const result = await analyzeCodeWithAI(codeContent);
+        const fileAnalysis: AppAnalysis = {
+          ...result,
+          repository: {
+            owner, name: repoName, url: trimmedUrl,
+            stars: repoInfo.stargazers_count,
+            forks: repoInfo.forks_count,
+            description: repoInfo.description,
+            language: repoInfo.language,
+            analyzedFile: fileEntry.name,
+            totalFilesFound: codeFiles.length,
+          },
+          codeSnippet: codeContent,
+        };
+
+        results.push({
+          name: fileEntry.name as string,
+          content: codeContent,
+          linesOfCode: codeContent.split('\n').length,
+          analysis: fileAnalysis,
+        });
+      }
+
+      if (!results.length) throw new Error('All files were too large to analyze (> 60 KB each)');
+
+      setGithubFiles(results);
+      setActiveGithubFile(0);
+
+      // Load first file into editor
+      setCode(results[0].content);
+      setAnalysis(results[0].analysis);
+      setAnalysisHistory(prev => [results[0].analysis, ...prev.slice(0, 9)]);
+
+      // Save first file to Firestore history
+      await addDoc(collection(db, 'analyses'), {
+        uid: user.uid,
+        analysis: results[0].analysis,
+        codeSnippet: results[0].content,
+        createdAt: serverTimestamp(),
+      });
+
+      setAutoFixMessage(null);
 
       if (collabSessionId) {
         const sessionRef = doc(db, 'collabSessions', collabSessionId);
-        await setDoc(sessionRef, { code: codeContent, analysis: newAnalysis, updatedAt: serverTimestamp() }, { merge: true });
+        await setDoc(sessionRef, { code: results[0].content, analysis: results[0].analysis, updatedAt: serverTimestamp() }, { merge: true });
       }
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error('GitHub analysis failed:', err);
+      setAutoFixMessage(null);
       alert(err.message || 'Failed to analyze GitHub repository');
     } finally {
       setIsAnalyzing(false);
@@ -195,6 +236,14 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
       setAnalysis(newAnalysis);
       setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
+
+      // Save to Firestore history
+      await addDoc(collection(db, 'analyses'), {
+        uid: user.uid,
+        analysis: newAnalysis,
+        codeSnippet: codeContent,
+        createdAt: serverTimestamp(),
+      });
 
       if (collabSessionId) {
         const sessionRef = doc(db, 'collabSessions', collabSessionId);
@@ -528,6 +577,16 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
               >
                 <Code2 className="w-3 h-3" /> Code Snippet
               </button>
+              <button
+                onClick={() => setAnalysisMode('github')}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
+                style={analysisMode === 'github'
+                  ? { background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)', color: '#fff' }
+                  : { color: '#64748b' }
+                }
+              >
+                <GitBranch className="w-3 h-3" /> GitHub Repo
+              </button>
             </div>
 
             {/* View mode toggle (only when auto-fixed) */}
@@ -600,53 +659,154 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           </div>
 
           {/* Editor / GitHub input / Diff viewer */}
-          <div className="flex-1 overflow-auto p-4">
+          <div className="flex-1 overflow-hidden flex">
             {analysisMode === 'code' ? (
-              viewMode === 'editor' ? (
-                <CodeInput
-                  onAnalyze={analyzeCode}
-                  isAnalyzing={isAnalyzing}
-                  code={code}
-                  setCode={setCode}
-                  targetLine={targetLine}
-                  onLineNavigated={() => setTargetLine(null)}
-                />
-              ) : (
-                <DiffViewer original={originalCode || ''} modified={code} />
-              )
-            ) : (
-              /* GitHub repo input */
-              <div className="space-y-4 p-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-                    <GitBranch className="w-4 h-4 text-cyan-400" />
-                    GitHub Repository URL
-                  </label>
-                  <div className="flex gap-3">
+              <div className="flex-1 overflow-auto p-4">
+                {viewMode === 'editor' ? (
+                  <CodeInput
+                    onAnalyze={analyzeCode}
+                    isAnalyzing={isAnalyzing}
+                    code={code}
+                    setCode={setCode}
+                    targetLine={targetLine}
+                    onLineNavigated={() => setTargetLine(null)}
+                    issues={analysis?.issues ?? []}
+                  />
+                ) : (
+                  <DiffViewer original={originalCode || ''} modified={code} />
+                )}
+              </div>
+            ) : githubFiles.length > 0 ? (
+              /* GitHub split view: file sidebar + code editor */
+              <>
+                {/* File list sidebar */}
+                <div className="flex-shrink-0 flex flex-col overflow-hidden"
+                  style={{ width: '220px', borderRight: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.15)' }}>
+                  {/* Compact URL bar */}
+                  <div className="px-3 py-2.5 flex gap-2 items-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     <input
                       type="url"
                       value={githubRepoUrl}
                       onChange={(e) => setGithubRepoUrl(e.target.value)}
-                      placeholder="https://github.com/owner/repo"
-                      className="input-field flex-1 font-mono text-sm"
+                      placeholder="github.com/owner/repo"
+                      className="flex-1 text-xs font-mono px-2 py-1.5 rounded-lg min-w-0"
+                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#f1f5f9', outline: 'none' }}
                     />
                     <button
                       onClick={() => analyzeGithubRepo(githubRepoUrl)}
                       disabled={isAnalyzing || !githubRepoUrl.trim()}
-                      className="btn-glow px-5 py-2.5 rounded-xl text-sm font-bold text-white flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)', flexShrink: 0 }}
+                      className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg disabled:opacity-50"
+                      style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
+                      title="Re-analyze"
                     >
-                      {isAnalyzing ? (
-                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      ) : (
-                        <><ChevronRight className="w-4 h-4" /> Analyze</>
-                      )}
+                      {isAnalyzing
+                        ? <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        : <ChevronRight className="w-3.5 h-3.5 text-white" />
+                      }
                     </button>
                   </div>
+
+                  {/* Files list */}
+                  <div className="flex-1 overflow-y-auto py-2 space-y-1 px-2">
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest px-2 mb-2">
+                      {githubFiles.length} file{githubFiles.length !== 1 ? 's' : ''}
+                    </p>
+                    {githubFiles.map((f, idx) => {
+                      const isActive = idx === activeGithubFile;
+                      const critical = f.analysis.summary.criticalIssues;
+                      const high = f.analysis.summary.highIssues;
+                      const total = f.analysis.summary.totalIssues;
+                      const score = f.analysis.overallScore;
+                      const scoreColor = score >= 80 ? '#4ade80' : score >= 60 ? '#facc15' : '#f87171';
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            setActiveGithubFile(idx);
+                            setCode(f.content);
+                            setAnalysis(f.analysis);
+                          }}
+                          className="w-full flex flex-col gap-1 px-3 py-2.5 rounded-xl text-left transition-all"
+                          style={{
+                            background: isActive ? 'rgba(6,182,212,0.1)' : 'rgba(255,255,255,0.02)',
+                            border: isActive ? '1px solid rgba(6,182,212,0.3)' : '1px solid transparent',
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: scoreColor }} />
+                            <span className="text-xs font-medium text-slate-200 truncate flex-1">{f.name}</span>
+                            <span className="text-xs font-bold flex-shrink-0" style={{ color: scoreColor }}>{score}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 pl-4">
+                            <span className="text-[10px] text-slate-600">{f.linesOfCode} lines</span>
+                            {critical > 0 && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171' }}>
+                                {critical}C
+                              </span>
+                            )}
+                            {high > 0 && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(249,115,22,0.15)', color: '#fb923c' }}>
+                                {high}H
+                              </span>
+                            )}
+                            {total === 0 && (
+                              <span className="text-[10px] text-green-400">Clean</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <p className="text-xs text-slate-500">
-                  Supports any public GitHub repository. We'll analyse top-level code files using GPT-4o-mini.
-                </p>
+
+                {/* Code editor pane */}
+                <div className="flex-1 overflow-auto p-4">
+                  <CodeInput
+                    onAnalyze={analyzeCode}
+                    isAnalyzing={isAnalyzing}
+                    code={code}
+                    setCode={setCode}
+                    targetLine={targetLine}
+                    onLineNavigated={() => setTargetLine(null)}
+                    issues={analysis?.issues ?? []}
+                  />
+                </div>
+              </>
+            ) : (
+              /* GitHub URL input (no files yet) */
+              <div className="flex-1 overflow-auto p-4">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                      <GitBranch className="w-4 h-4 text-cyan-400" />
+                      GitHub Repository URL
+                    </label>
+                    <div className="flex gap-3">
+                      <input
+                        type="url"
+                        value={githubRepoUrl}
+                        onChange={(e) => setGithubRepoUrl(e.target.value)}
+                        placeholder="https://github.com/owner/repo"
+                        className="input-field flex-1 font-mono text-sm"
+                      />
+                      <button
+                        onClick={() => analyzeGithubRepo(githubRepoUrl)}
+                        disabled={isAnalyzing || !githubRepoUrl.trim()}
+                        className="btn-glow px-5 py-2.5 rounded-xl text-sm font-bold text-white flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)', flexShrink: 0 }}
+                      >
+                        {isAnalyzing ? (
+                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <><ChevronRight className="w-4 h-4" /> Analyze</>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Supports any public GitHub repository. We'll analyse top-level code files using Llama 3.3 70B via Groq.
+                  </p>
+                </div>
               </div>
             )}
           </div>

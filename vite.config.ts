@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,17 +10,38 @@ import nodemailer from 'nodemailer';
 // ---------------------------------------------------------------------------
 
 function readFunctionsEnv(): Record<string, string> {
-  try {
-    const content = fs.readFileSync(path.resolve('functions/.env'), 'utf-8');
-    const env: Record<string, string> = {};
-    for (const line of content.split('\n')) {
-      const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.+)$/);
-      if (m) env[m[1]] = m[2].trim();
+  const env: Record<string, string> = {};
+
+  // Parse any .env-style file, handling both LF and CRLF line endings
+  const parseEnvFile = (filePath: string) => {
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eqIdx = line.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = line.slice(0, eqIdx).trim();
+        const value = line.slice(eqIdx + 1).trim();
+        if (key) env[key] = value;
+      }
+    } catch {
+      // file not found — skip silently
     }
-    return env;
-  } catch {
-    return {};
+  };
+
+  // Primary: functions/.env (OPENAI_API_KEY)
+  parseEnvFile(path.resolve('functions/.env'));
+
+  // Fallback: .env.local (VITE_OPENAI_API_KEY → exposed as OPENAI_API_KEY)
+  if (!env.OPENAI_API_KEY) {
+    parseEnvFile(path.resolve('.env.local'));
+    if (env.VITE_OPENAI_API_KEY) {
+      env.OPENAI_API_KEY = env.VITE_OPENAI_API_KEY;
+    }
   }
+
+  return env;
 }
 
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -37,19 +58,21 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 
 async function callOpenAI(
   apiKey: string,
+  baseUrl: string,
+  model: string,
   messages: Array<{ role: string; content: string }>,
   maxTokens: number,
   jsonMode = false,
 ): Promise<string> {
   const body: Record<string, unknown> = {
-    model: 'gpt-4o-mini',
+    model,
     messages,
     temperature: 0.1,
     max_tokens: maxTokens,
   };
   if (jsonMode) body.response_format = { type: 'json_object' };
 
-  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+  const resp = await fetch(baseUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
@@ -57,7 +80,7 @@ async function callOpenAI(
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(`OpenAI ${resp.status}: ${text.slice(0, 300)}`);
+    throw new Error(`AI API error ${resp.status}: ${text.slice(0, 300)}`);
   }
   const data = await resp.json() as { choices: Array<{ message: { content: string } }> };
   return data.choices[0].message.content;
@@ -87,8 +110,39 @@ function sendJSON(res: ServerResponse, status: number, data: unknown) {
 // ---------------------------------------------------------------------------
 // Vite config
 // ---------------------------------------------------------------------------
-export default defineConfig({
-  plugins: [
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+
+  // Read .env.local directly so the key is always picked up regardless of Vite prefix rules
+  const directEnv = readFunctionsEnv();
+  // Also parse .env.local itself
+  (() => {
+    try {
+      const content = fs.readFileSync(path.resolve('.env.local'), 'utf-8');
+      for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eqIdx = line.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = line.slice(0, eqIdx).trim();
+        const value = line.slice(eqIdx + 1).trim();
+        if (key && !directEnv[key]) directEnv[key] = value;
+      }
+    } catch { /* ignore */ }
+  })();
+
+  const GROQ_KEY = directEnv.VITE_GROQ_API_KEY || directEnv.GROQ_API_KEY || env.VITE_GROQ_API_KEY || '';
+  const OPENAI_KEY = directEnv.OPENAI_API_KEY || directEnv.VITE_OPENAI_API_KEY || env.OPENAI_API_KEY || '';
+  const AI_KEY = GROQ_KEY || OPENAI_KEY;
+  const AI_BASE_URL = GROQ_KEY
+    ? 'https://api.groq.com/openai/v1/chat/completions'
+    : 'https://api.openai.com/v1/chat/completions';
+  const AI_MODEL = GROQ_KEY ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini';
+
+  console.log(`[AI Proxy] Using: ${GROQ_KEY ? `Groq ✓ (key: ${GROQ_KEY.slice(0, 8)}...)` : OPENAI_KEY ? `OpenAI (key: ${OPENAI_KEY.slice(0, 8)}...)` : '⚠ NO API KEY FOUND'}`);
+
+  return {
+    plugins: [
     react(),
     // ---- OpenAI proxy (dev only) ----------------------------------------
     // Intercepts /api/analyzeCode, /api/fixCode, /api/analyzeGithubRepo
@@ -98,6 +152,17 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
           const url = req.url ?? '';
+
+          // ------------------------------------------------------------------
+          // /api/ping — key diagnostic
+          // ------------------------------------------------------------------
+          if (url.startsWith('/api/ping')) {
+            sendJSON(res, 200, {
+              keyFound: !!OPENAI_KEY,
+              keyPrefix: OPENAI_KEY ? OPENAI_KEY.slice(0, 12) + '...' : null,
+            });
+            return;
+          }
 
           // ------------------------------------------------------------------
           // /mailer — Gmail SMTP email sender (bypasses the /api proxy)
@@ -144,8 +209,10 @@ export default defineConfig({
           const isAnalyze = url.startsWith('/api/analyzeCode');
           const isFix = url.startsWith('/api/fixCode');
           const isGithub = url.startsWith('/api/analyzeGithubRepo');
+          const isExplain = url.startsWith('/api/explainCode');
+          const isChat = url.startsWith('/api/chat');
 
-          if (!isAnalyze && !isFix && !isGithub) return next();
+          if (!isAnalyze && !isFix && !isGithub && !isExplain && !isChat) return next();
 
           // Handle CORS preflight
           if (req.method === 'OPTIONS') {
@@ -157,10 +224,9 @@ export default defineConfig({
             return;
           }
 
-          const env = readFunctionsEnv();
-          const apiKey = env.OPENAI_API_KEY;
+          const apiKey = AI_KEY;
           if (!apiKey) {
-            sendJSON(res, 500, { error: 'OPENAI_API_KEY not found in functions/.env' });
+            sendJSON(res, 500, { error: 'No API key found. Set VITE_GROQ_API_KEY (free) or VITE_OPENAI_API_KEY in .env.local' });
             return;
           }
 
@@ -219,7 +285,7 @@ Code (line numbers prepended):
 ${numbered}
 \`\`\``;
 
-              const raw = await callOpenAI(apiKey, [
+              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
                 { role: 'system', content: 'You are an expert code reviewer. Output valid JSON only. Be accurate and thorough.' },
                 { role: 'user', content: prompt },
               ], 2500, true);
@@ -307,7 +373,7 @@ Rules:
 Code to fix:
 ${code}`;
 
-              const rawFixed = await callOpenAI(apiKey, [
+              const rawFixed = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
                 { role: 'system', content: 'You are a precise code repair engine. Return only the fixed source code. Absolutely no markdown, no backticks, no explanations.' },
                 { role: 'user', content: prompt },
               ], 4000);
@@ -393,7 +459,7 @@ Code:
 ${numbered}
 \`\`\``;
 
-              const raw = await callOpenAI(apiKey, [
+              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
                 { role: 'system', content: 'Expert code reviewer. JSON output only.' },
                 { role: 'user', content: prompt },
               ], 2500, true);
@@ -464,6 +530,88 @@ ${numbered}
               return;
             }
 
+            // ----------------------------------------------------------------
+            // /api/explainCode
+            // ----------------------------------------------------------------
+            if (isExplain) {
+              const code = body.code as string | undefined;
+              if (!code) { sendJSON(res, 400, { error: 'Missing code parameter' }); return; }
+
+              const numbered = code.split('\n')
+                .map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`)
+                .join('\n');
+
+              const prompt = `You are an expert software engineer. Explain the following code in plain English for a junior developer.
+
+Return ONLY valid JSON — no markdown, no extra text:
+{
+  "language": "<detected language>",
+  "purpose": "<one sentence: what the code does>",
+  "overview": "<2-3 sentence high-level explanation>",
+  "complexity": "Simple" | "Moderate" | "Complex",
+  "sections": [{"title":"<name>","lines":"<e.g. 1-5>","explanation":"<plain English>"}],
+  "inputs": ["<param: description>"],
+  "outputs": "<what it returns or produces>",
+  "dependencies": ["<library>"],
+  "audience": "<who would use this>",
+  "keyPoints": ["<key insight>", "<another insight>"]
+}
+
+Code (line numbers prepended):
+\`\`\`
+${numbered}
+\`\`\``;
+
+              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
+                { role: 'system', content: 'Expert code explainer. Output valid JSON only.' },
+                { role: 'user', content: prompt },
+              ], 1500, true);
+
+              const d = parseJSON(raw) as Record<string, unknown>;
+              const explanation = {
+                language: String(d.language ?? 'Unknown'),
+                purpose: String(d.purpose ?? ''),
+                overview: String(d.overview ?? ''),
+                complexity: (['Simple', 'Moderate', 'Complex'].includes(String(d.complexity)) ? d.complexity : 'Moderate') as string,
+                sections: ((d.sections as Array<Record<string, string>> | undefined) ?? []).map(s => ({
+                  title: String(s.title ?? ''), lines: String(s.lines ?? ''), explanation: String(s.explanation ?? ''),
+                })),
+                inputs: ((d.inputs as string[] | undefined) ?? []).map(String),
+                outputs: String(d.outputs ?? ''),
+                dependencies: ((d.dependencies as string[] | undefined) ?? []).map(String),
+                audience: String(d.audience ?? ''),
+                keyPoints: ((d.keyPoints as string[] | undefined) ?? []).map(String),
+              };
+              sendJSON(res, 200, { success: true, explanation });
+              return;
+            }
+
+            // ----------------------------------------------------------------
+            // /api/chat
+            // ----------------------------------------------------------------
+            if (isChat) {
+              const code = (body.code as string | undefined) ?? '';
+              const analysis = body.analysis as Record<string, unknown> | null | undefined;
+              const history = (body.history as Array<{ role: string; content: string }> | undefined) ?? [];
+              const userMessage = body.userMessage as string | undefined;
+              if (!userMessage) { sendJSON(res, 400, { error: 'Missing userMessage' }); return; }
+
+              const analysisCtx = analysis
+                ? `Analysis: score=${analysis.overallScore}/100, issues=${(analysis.summary as any)?.totalIssues ?? 0}, debt=${analysis.technicalDebt}`
+                : 'No analysis has been run yet.';
+
+              const systemPrompt = `You are an expert code assistant. The user is asking about this code:\n\`\`\`\n${code}\n\`\`\`\n${analysisCtx}\nAnswer specifically about THIS code. Reference exact line numbers. Be concise and actionable.`;
+
+              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
+                { role: 'system', content: systemPrompt },
+                ...history,
+                { role: 'user', content: userMessage },
+              ], 1000);
+
+              sendJSON(res, 200, { success: true, reply: raw.trim() });
+              return;
+            }
+
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error('[openai-proxy]', msg);
@@ -473,24 +621,11 @@ ${numbered}
       },
     },
   ],
-  optimizeDeps: {
-    exclude: ['lucide-react'],
-  },
-  server: {
-    port: 3001,
-    // The proxy below is kept as a fallback for any /api/* routes not handled
-    // by the plugin above (e.g. when the Firebase emulator IS running).
-    proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:5001/project-70cbf/us-central1',
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api/, ''),
-        configure: (proxy) => {
-          proxy.on('error', (err) => {
-            console.log('[proxy fallback error]', err.message);
-          });
-        },
-      },
+    optimizeDeps: {
+      exclude: ['lucide-react'],
     },
-  },
+    server: {
+      port: 3001,
+    },
+  };
 });

@@ -390,7 +390,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 <button
                   onClick={onAutoFix}
                   disabled={isFixing}
-                  className="btn-glow flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-wait"
+                  className="btn-glow flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-wait"
                   style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
                 >
                   {isFixing
@@ -428,7 +428,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
             <button
               key={s.label}
               onClick={() => s.sev && setSelectedSeverity(s.sev)}
-              className="py-3.5 text-center transition-colors"
+              className="py-3.5 text-center transition-colors hover:bg-white/5 rounded"
               style={{
                 background: 'rgba(0,0,0,0.18)',
                 borderRight: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none',
@@ -464,7 +464,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 const Icon = m.icon;
                 return (
                   <div key={m.label} className="rounded-xl p-3.5"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderLeft: `3px solid ${m.color}30` }}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-1.5">
                         <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: m.color }} />

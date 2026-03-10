@@ -10,42 +10,44 @@ import { SnippetsPage } from './components/SnippetsPage';
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showAuth, setShowAuth] = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
   const [currentView, setCurrentView] = useState<'home' | 'history' | 'snippets'>('home');
   const [restoredAnalysis, setRestoredAnalysis] = useState<any>(null);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      setUser(user);
+    const unsubscribe = auth.onAuthStateChanged((u) => {
+      setUser(u);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
-  const handleAuthSuccess = (user: User) => {
-    setUser(user);
+  const handleAuthSuccess = (u: User) => {
+    setUser(u);
   };
 
   const handleGetStarted = () => {
-    setShowAuth(true);
+    setShowLanding(false);
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: '#040d1a' }}>
         <div className="text-center">
-          <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-white">Loading...</p>
+          <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 text-sm">Loading…</p>
         </div>
       </div>
     );
   }
 
+  // Always show landing page on first load
+  if (showLanding) {
+    return <LandingPage onGetStarted={handleGetStarted} />;
+  }
+
+  // Already logged in — go straight to app
   if (!user) {
-    if (!showAuth) {
-      return <LandingPage onGetStarted={handleGetStarted} />;
-    }
     return <GoogleAuth onAuthSuccess={handleAuthSuccess} />;
   }
 

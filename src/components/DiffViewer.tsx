@@ -27,28 +27,32 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ original, modified }) =>
             <div className="grid grid-cols-2 divide-x divide-white/10 h-[500px] font-mono text-sm leading-6 overflow-hidden">
                 {/* Original Side */}
                 <div className="bg-red-500/5 overflow-y-auto overflow-x-auto custom-scrollbar">
-                    {originalLines.map((line, i) => {
-                        const isRemoved = line !== modifiedLines[i];
-                        return (
-                            <div key={i} className={`flex px-4 min-h-[24px] ${isRemoved ? 'bg-red-500/20 text-red-200 border-l-2 border-red-500' : 'text-slate-400 opacity-50'}`}>
-                                <span className="w-8 shrink-0 text-right pr-4 text-slate-600 select-none text-xs">{i + 1}</span>
-                                <span className="whitespace-pre">{line || ' '}</span>
-                            </div>
-                        );
-                    })}
+                    <div style={{ minWidth: 'max-content' }}>
+                        {originalLines.map((line, i) => {
+                            const isRemoved = line !== modifiedLines[i];
+                            return (
+                                <div key={i} className={`flex min-h-[24px] w-full ${isRemoved ? 'bg-red-500/20 text-red-200 border-l-2 border-red-500' : 'text-slate-400 opacity-50'}`}>
+                                    <span className="w-10 shrink-0 text-right pr-3 pl-2 text-slate-600 select-none text-xs leading-6">{i + 1}</span>
+                                    <span className="whitespace-pre px-3">{line || ' '}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
 
                 {/* Modified Side */}
                 <div className="bg-emerald-500/5 overflow-y-auto overflow-x-auto custom-scrollbar">
-                    {modifiedLines.map((line, i) => {
-                        const isAdded = line !== originalLines[i];
-                        return (
-                            <div key={i} className={`flex px-4 min-h-[24px] ${isAdded ? 'bg-emerald-500/20 text-emerald-200 border-l-2 border-emerald-500 font-medium' : 'text-slate-300'}`}>
-                                <span className="w-8 shrink-0 text-right pr-4 text-slate-600 select-none text-xs">{i + 1}</span>
-                                <span className="whitespace-pre">{line || ' '}</span>
-                            </div>
-                        );
-                    })}
+                    <div style={{ minWidth: 'max-content' }}>
+                        {modifiedLines.map((line, i) => {
+                            const isAdded = line !== originalLines[i];
+                            return (
+                                <div key={i} className={`flex min-h-[24px] w-full ${isAdded ? 'bg-emerald-500/20 text-emerald-200 border-l-2 border-emerald-500 font-medium' : 'text-slate-300'}`}>
+                                    <span className="w-10 shrink-0 text-right pr-3 pl-2 text-slate-600 select-none text-xs leading-6">{i + 1}</span>
+                                    <span className="whitespace-pre px-3">{line || ' '}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             </div>
         </div>

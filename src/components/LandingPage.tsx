@@ -36,7 +36,7 @@ const FEATURES = [
   {
     icon: Zap,
     title: 'AI-Powered Fixes',
-    description: 'One-click Auto-Fix applies GPT-4o-mini patches and re-analyzes to verify every improvement.',
+    description: 'One-click Auto-Fix applies Llama 3.3 70B patches and re-analyzes to verify every improvement.',
     color: 'amber',
     gradient: 'from-amber-500/20 to-amber-600/5',
     border: 'rgba(245,158,11,0.3)',
@@ -156,7 +156,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
             <div className="animate-slide-up">
               <span className="tag neon-border text-cyan-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                GPT-4o-mini Powered
+                Llama 3.3 70B Powered
               </span>
             </div>
 
@@ -346,7 +346,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
                 step: '02',
                 icon: Cpu,
                 title: 'AI Reviews Instantly',
-                desc: 'GPT-4o-mini scans for security, performance, and logic issues in under 5 seconds.',
+                desc: 'Llama 3.3 70B scans for security, performance, and logic issues in under 5 seconds.',
                 color: '#8b5cf6',
               },
               {
@@ -405,7 +405,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
             <div className="space-y-4">
               {[
                 { icon: Lock, text: 'Enterprise-grade security scanning (OWASP Top-10)' },
-                { icon: Zap, text: 'Sub-5-second analysis with GPT-4o-mini' },
+                { icon: Zap, text: 'Sub-5-second analysis with Llama 3.3 70B' },
                 { icon: BarChart3, text: 'Real-time quality metrics with visual progress bars' },
                 { icon: GitBranch, text: 'GitHub repo analysis — any public repository' },
                 { icon: Terminal, text: 'Collaborative sessions for live team code review' },

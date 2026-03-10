@@ -55,188 +55,159 @@ export interface EmailAnalysisData {
 // HTML email template generator
 // --------------------------------------------------------------------------
 export function generateHTMLEmail(data: EmailAnalysisData): string {
-  const scoreColor =
-    data.score >= 80 ? '#22c55e' : data.score >= 60 ? '#f59e0b' : '#ef4444';
-  const scoreMsg =
-    data.score >= 80
-      ? 'Excellent Code Quality'
-      : data.score >= 60
-      ? 'Good — Room to Improve'
-      : 'Needs Attention';
+  const scoreColor = data.score >= 80 ? '#10b981' : data.score >= 60 ? '#f59e0b' : '#ef4444';
+  const scoreLabel = data.score >= 80 ? 'Great shape' : data.score >= 60 ? 'Room to improve' : 'Needs attention';
+  const totalIssues = data.criticalIssues + data.highIssues + data.mediumIssues + data.lowIssues;
 
-  const metricRow = (label: string, value: number) => {
-    const color =
-      value >= 70 ? '#22c55e' : value >= 50 ? '#f59e0b' : '#ef4444';
-    const pct = Math.max(0, Math.min(100, value));
+  const metricBar = (label: string, value: number) => {
+    const color = value >= 70 ? '#10b981' : value >= 50 ? '#f59e0b' : '#ef4444';
     return `
-    <tr>
-      <td style="padding:8px 0;font-size:13px;color:#94a3b8;width:140px;white-space:nowrap;">${label}</td>
-      <td style="padding:8px 12px 8px 0;">
-        <div style="background:#1e293b;border-radius:4px;height:8px;overflow:hidden;">
-          <div style="width:${pct}%;background:${color};height:8px;border-radius:4px;"></div>
-        </div>
-      </td>
-      <td style="padding:8px 0;font-size:13px;font-weight:700;color:${color};width:36px;text-align:right;">${value}</td>
-    </tr>`;
+      <tr>
+        <td style="padding:9px 0;font-size:13px;color:#94a3b8;width:130px;white-space:nowrap;">${label}</td>
+        <td style="padding:9px 16px 9px 0;">
+          <div style="background:#1e293b;border-radius:99px;height:6px;">
+            <div style="width:${value}%;background:${color};height:6px;border-radius:99px;"></div>
+          </div>
+        </td>
+        <td style="padding:9px 0;width:32px;text-align:right;font-size:13px;font-weight:700;color:${color};">${value}</td>
+      </tr>`;
   };
 
-  const issueCard = (
-    count: number,
-    label: string,
-    color: string,
-    bg: string,
-    border: string,
-  ) => `
-  <td style="text-align:center;padding:0 6px;">
-    <div style="background:${bg};border:1px solid ${border};border-radius:10px;padding:16px 10px;min-width:100px;">
-      <div style="font-size:30px;font-weight:900;color:${color};line-height:1;">${count}</div>
-      <div style="font-size:11px;color:#94a3b8;margin-top:4px;text-transform:uppercase;letter-spacing:0.06em;">${label}</div>
-    </div>
-  </td>`;
+  const severityBadge = (count: number, label: string, bg: string, text: string) =>
+    count > 0 ? `<td style="padding:0 6px 0 0;">
+      <div style="display:inline-block;background:${bg};border-radius:6px;padding:6px 14px;text-align:center;">
+        <div style="font-size:20px;font-weight:800;color:${text};line-height:1.1;">${count}</div>
+        <div style="font-size:10px;color:${text};opacity:0.75;text-transform:uppercase;letter-spacing:0.06em;margin-top:2px;">${label}</div>
+      </div>
+    </td>` : '';
 
-  const recItems = data.recommendations
-    .map(
-      (rec, i) => `
-  <tr>
-    <td style="padding:0 0 10px;">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="vertical-align:top;width:30px;padding-top:2px;">
-            <div style="width:22px;height:22px;background:linear-gradient(135deg,#1d4ed8,#7c3aed);border-radius:50%;text-align:center;line-height:22px;font-size:11px;font-weight:700;color:#fff;">${i + 1}</div>
-          </td>
-          <td style="padding-left:10px;font-size:14px;color:#cbd5e1;line-height:1.6;">${rec}</td>
-        </tr>
-      </table>
-    </td>
-  </tr>`,
-    )
-    .join('');
+  const recList = data.recommendations.map((r, i) => `
+    <tr>
+      <td style="vertical-align:top;width:22px;padding:0 0 11px;font-size:13px;color:#475569;font-weight:600;">${i + 1}.</td>
+      <td style="padding:0 0 11px 8px;font-size:14px;color:#cbd5e1;line-height:1.65;">${r}</td>
+    </tr>`).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Code Analysis Report</title>
+  <title>Code Review — ${data.language}</title>
 </head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:40px 20px;">
-    <tr><td align="center">
-      <table width="620" cellpadding="0" cellspacing="0" style="max-width:620px;background:#1e293b;border-radius:16px;overflow:hidden;border:1px solid #334155;">
+<body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;padding:40px 16px;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
 
-        <!-- HEADER -->
+  <!-- HEADER -->
+  <tr>
+    <td style="padding:0 0 24px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="background:linear-gradient(135deg,#1d4ed8 0%,#7c3aed 100%);padding:40px;text-align:center;">
-            <div style="font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.65);margin-bottom:10px;">
-              AI Code Intelligence
-            </div>
-            <h1 style="margin:0;font-size:26px;font-weight:800;color:#fff;letter-spacing:-0.3px;">
-              ${data.language} Analysis Report
-            </h1>
-            <p style="margin:10px 0 0;color:rgba(255,255,255,0.7);font-size:15px;">
-              Prepared for <strong>${data.recipientName}</strong>
-            </p>
+          <td>
+            <span style="font-size:16px;font-weight:700;color:#f1f5f9;letter-spacing:-0.3px;">Intellicode</span>
+          </td>
+          <td style="text-align:right;">
+            <span style="font-size:12px;color:#475569;">Code Analysis Report</span>
           </td>
         </tr>
-
-        <!-- SCORE -->
-        <tr>
-          <td style="padding:32px 40px 0;">
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="background:#0f172a;border-radius:14px;padding:28px;text-align:center;border:1px solid #334155;">
-                  <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;margin-bottom:14px;">
-                    Health Score
-                  </div>
-                  <div style="font-size:72px;font-weight:900;color:${scoreColor};line-height:1;">
-                    ${data.score}
-                  </div>
-                  <div style="font-size:18px;color:#475569;margin-top:2px;">/ 100</div>
-                  <div style="margin-top:14px;display:inline-block;font-size:13px;font-weight:700;color:${scoreColor};background:${scoreColor}22;padding:5px 18px;border-radius:20px;border:1px solid ${scoreColor}44;">
-                    ${scoreMsg}
-                  </div>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- ISSUES BREAKDOWN -->
-        <tr>
-          <td style="padding:28px 40px 0;">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;margin-bottom:14px;">
-              Issues Breakdown
-            </div>
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                ${issueCard(data.criticalIssues, 'Critical', '#ef4444', '#1e0a0a', '#ef444440')}
-                ${issueCard(data.highIssues,     'High',     '#f97316', '#1e100a', '#f9731640')}
-                ${issueCard(data.mediumIssues,   'Medium',   '#eab308', '#1e1a0a', '#eab30840')}
-                ${issueCard(data.lowIssues,      'Low',      '#3b82f6', '#0a0f1e', '#3b82f640')}
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <!-- QUALITY METRICS -->
-        <tr>
-          <td style="padding:28px 40px 0;">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;margin-bottom:14px;">
-              Quality Metrics
-            </div>
-            <div style="background:#0f172a;border-radius:12px;padding:20px 24px;border:1px solid #334155;">
-              <table width="100%" cellpadding="0" cellspacing="0">
-                ${metricRow('Maintainability', data.metrics.maintainability)}
-                ${metricRow('Security',        data.metrics.security)}
-                ${metricRow('Performance',     data.metrics.performance)}
-                ${metricRow('Readability',     data.metrics.readability)}
-                ${metricRow('Documentation',   data.metrics.documentation)}
-              </table>
-            </div>
-          </td>
-        </tr>
-
-        <!-- RECOMMENDATIONS -->
-        <tr>
-          <td style="padding:28px 40px 0;">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;margin-bottom:14px;">
-              AI Recommendations
-            </div>
-            <table width="100%" cellpadding="0" cellspacing="0">
-              ${recItems}
-            </table>
-          </td>
-        </tr>
-
-        <!-- TECHNICAL DEBT -->
-        <tr>
-          <td style="padding:28px 40px 0;">
-            <div style="background:#1c0a0022;border:1px solid #f9731640;border-radius:12px;padding:20px 24px;">
-              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#f97316;margin-bottom:8px;">
-                Technical Debt
-              </div>
-              <div style="font-size:14px;color:#cbd5e1;line-height:1.6;">
-                ${data.technicalDebt}
-              </div>
-            </div>
-          </td>
-        </tr>
-
-        <!-- FOOTER -->
-        <tr>
-          <td style="padding:32px 40px;text-align:center;border-top:1px solid #334155;margin-top:32px;">
-            <div style="font-size:13px;color:#475569;">
-              Sent via <strong style="color:#94a3b8;">AI Code Intelligence</strong>
-            </div>
-            <div style="font-size:12px;color:#334155;margin-top:6px;">
-              &copy; 2026 CodeIntel &bull; MKU Final Project
-            </div>
-          </td>
-        </tr>
-
       </table>
-    </td></tr>
-  </table>
+    </td>
+  </tr>
+
+  <!-- HERO CARD -->
+  <tr>
+    <td style="background:#161b22;border-radius:12px 12px 0 0;border:1px solid #21262d;border-bottom:none;padding:36px 40px 32px;">
+      <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.1em;">${data.language} &nbsp;·&nbsp; Code Review</p>
+      <h1 style="margin:0 0 16px;font-size:26px;font-weight:800;color:#f1f5f9;letter-spacing:-0.5px;line-height:1.2;">Hi ${data.recipientName},<br>here's your report.</h1>
+
+      <!-- SCORE ROW -->
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:middle;">
+            <div style="font-size:56px;font-weight:900;color:${scoreColor};line-height:1;letter-spacing:-2px;">${data.score}<span style="font-size:22px;color:#475569;font-weight:500;letter-spacing:0;">/100</span></div>
+            <div style="margin-top:6px;font-size:13px;color:#64748b;">${scoreLabel} &nbsp;·&nbsp; ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} found</div>
+          </td>
+          <td style="text-align:right;vertical-align:middle;">
+            <!-- Score arc visual using a simple border trick -->
+            <div style="width:72px;height:72px;border-radius:50%;border:5px solid #1e293b;border-top-color:${scoreColor};display:inline-block;"></div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- SEVERITY STRIP -->
+  ${totalIssues > 0 ? `<tr>
+    <td style="background:#0d1117;border-left:1px solid #21262d;border-right:1px solid #21262d;padding:20px 40px;">
+      <table cellpadding="0" cellspacing="0">
+        <tr>
+          ${severityBadge(data.criticalIssues, 'Critical', 'rgba(239,68,68,0.12)', '#f87171')}
+          ${severityBadge(data.highIssues,     'High',     'rgba(249,115,22,0.12)', '#fb923c')}
+          ${severityBadge(data.mediumIssues,   'Medium',   'rgba(234,179,8,0.10)',  '#fbbf24')}
+          ${severityBadge(data.lowIssues,      'Low',      'rgba(148,163,184,0.08)','#94a3b8')}
+        </tr>
+      </table>
+    </td>
+  </tr>` : ''}
+
+  <!-- METRICS -->
+  <tr>
+    <td style="background:#161b22;border:1px solid #21262d;border-top:none;border-bottom:none;padding:28px 40px;">
+      <p style="margin:0 0 14px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.1em;">Quality Metrics</p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${metricBar('Maintainability', data.metrics.maintainability)}
+        ${metricBar('Security',        data.metrics.security)}
+        ${metricBar('Performance',     data.metrics.performance)}
+        ${metricBar('Readability',     data.metrics.readability)}
+        ${metricBar('Documentation',   data.metrics.documentation)}
+      </table>
+    </td>
+  </tr>
+
+  <!-- RECOMMENDATIONS -->
+  ${data.recommendations.length > 0 ? `<tr>
+    <td style="background:#161b22;border:1px solid #21262d;border-top:1px solid #21262d;border-bottom:none;padding:28px 40px;">
+      <p style="margin:0 0 16px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.1em;">Recommendations</p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${recList}
+      </table>
+    </td>
+  </tr>` : ''}
+
+  <!-- TECHNICAL DEBT -->
+  ${data.technicalDebt ? `<tr>
+    <td style="background:#161b22;border:1px solid #21262d;border-top:1px solid #21262d;border-bottom:none;padding:20px 40px;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:middle;">
+            <span style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.1em;">Estimated Fix Time</span>
+            <div style="margin-top:4px;font-size:15px;font-weight:600;color:#f59e0b;">${data.technicalDebt}</div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>` : ''}
+
+  <!-- FOOTER CARD -->
+  <tr>
+    <td style="background:#161b22;border:1px solid #21262d;border-top:1px solid #21262d;border-radius:0 0 12px 12px;padding:20px 40px;">
+      <p style="margin:0;font-size:13px;color:#475569;line-height:1.7;">
+        Open <strong style="color:#94a3b8;">Intellicode</strong> in your browser to view the full analysis, apply auto-fixes, and re-run the review.
+      </p>
+    </td>
+  </tr>
+
+  <!-- BOTTOM META -->
+  <tr>
+    <td style="padding:24px 0 0;text-align:center;">
+      <p style="margin:0;font-size:12px;color:#334155;">Intellicode &nbsp;&middot;&nbsp; &copy; 2026 &nbsp;&middot;&nbsp; MKU Final Project</p>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
 </body>
 </html>`;
 }
