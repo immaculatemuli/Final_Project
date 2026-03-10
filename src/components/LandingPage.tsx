@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Code2, GitBranch, Shield, Zap, ArrowRight, CheckCircle2, Terminal, Cpu, BarChart3, Lock } from 'lucide-react';
+import { Code2, Shield, Zap, ArrowRight, CheckCircle2, Terminal, Cpu, BarChart3, Lock } from 'lucide-react';
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -16,9 +16,9 @@ const FEATURES = [
     glow: 'rgba(6,182,212,0.12)',
   },
   {
-    icon: GitBranch,
-    title: 'GitHub Integration',
-    description: 'Analyze entire repositories with one URL. Multi-file scanning, pattern detection in seconds.',
+    icon: Shield,
+    title: 'Security Scanning',
+    description: 'Deep OWASP Top-10 analysis catches injections, insecure dependencies, and auth flaws instantly.',
     color: 'violet',
     gradient: 'from-violet-500/20 to-violet-600/5',
     border: 'rgba(139,92,246,0.3)',
@@ -339,7 +339,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
                 step: '01',
                 icon: Code2,
                 title: 'Paste Your Code',
-                desc: 'Drop in a snippet or point to a GitHub repo URL. Any language, any size.',
+                desc: 'Drop in a snippet or upload a file. Any language, any size.',
                 color: '#06b6d4',
               },
               {
@@ -407,7 +407,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
                 { icon: Lock, text: 'Enterprise-grade security scanning (OWASP Top-10)' },
                 { icon: Zap, text: 'Sub-5-second analysis with Llama 3.3 70B' },
                 { icon: BarChart3, text: 'Real-time quality metrics with visual progress bars' },
-                { icon: GitBranch, text: 'GitHub repo analysis — any public repository' },
+                { icon: Code2, text: 'Multi-file upload and folder scanning support' },
                 { icon: Terminal, text: 'Collaborative sessions for live team code review' },
                 { icon: CheckCircle2, text: 'Auto-Fix with automatic re-analysis verification' },
               ].map((b, i) => {

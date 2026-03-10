@@ -72,6 +72,19 @@ const HistoryPage: React.FC<{
             docs.push({ id: d.id, result: result, createdAt: (data as { createdAt?: unknown }).createdAt });
           }
         });
+
+        // Always sort client-side: handles both the ordered and fallback queries,
+        // and fixes the serverTimestamp() pending-state issue where new docs have null createdAt
+        docs.sort((a, b) => {
+          const toMs = (ts: unknown): number => {
+            if (!ts) return Date.now(); // pending serverTimestamp → treat as now (most recent)
+            if (typeof (ts as any).toMillis === 'function') return (ts as any).toMillis();
+            if (typeof (ts as any).toDate === 'function') return (ts as any).toDate().getTime();
+            return new Date(ts as string).getTime() || 0;
+          };
+          return toMs(b.createdAt) - toMs(a.createdAt);
+        });
+
         setItems(docs);
         setLastDoc(snap.docs[snap.docs.length - 1] || null);
         setHasMore(snap.docs.length === INITIAL_LIMIT);

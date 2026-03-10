@@ -63,6 +63,7 @@ async function callOpenAI(
   messages: Array<{ role: string; content: string }>,
   maxTokens: number,
   jsonMode = false,
+  maxRetries = 4,
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model,
@@ -72,18 +73,35 @@ async function callOpenAI(
   };
   if (jsonMode) body.response_format = { type: 'json_object' };
 
-  const resp = await fetch(baseUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(body),
-  });
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const resp = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
 
-  if (!resp.ok) {
+    if (resp.ok) {
+      const data = await resp.json() as { choices: Array<{ message: { content: string } }> };
+      return data.choices[0].message.content;
+    }
+
     const text = await resp.text();
+
+    // Rate-limited: parse the exact wait time from Groq's error message and retry
+    if (resp.status === 429 && attempt < maxRetries) {
+      const secMatch = text.match(/try again in (\d+\.?\d*)s/i);
+      const waitMs = secMatch
+        ? Math.ceil(parseFloat(secMatch[1]) * 1000) + 2000   // add 2s buffer
+        : (attempt + 1) * 20000;                              // fallback: 20s, 40s…
+      console.log(`[AI Proxy] Rate limited — waiting ${Math.ceil(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries})…`);
+      await new Promise(r => setTimeout(r, waitMs));
+      continue;
+    }
+
     throw new Error(`AI API error ${resp.status}: ${text.slice(0, 300)}`);
   }
-  const data = await resp.json() as { choices: Array<{ message: { content: string } }> };
-  return data.choices[0].message.content;
+
+  throw new Error('AI API: max retries exceeded after rate-limit waits');
 }
 
 function parseJSON(text: string): unknown {
