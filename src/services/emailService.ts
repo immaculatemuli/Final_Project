@@ -29,6 +29,14 @@ export function isEmailConfigured(): boolean {
 // --------------------------------------------------------------------------
 // Types
 // --------------------------------------------------------------------------
+export interface EmailIssue {
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  category: string;
+  message: string;
+  line?: number;
+  suggestion?: string;
+}
+
 export interface EmailAnalysisData {
   recipientName: string;
   recipientEmail: string;
@@ -39,6 +47,7 @@ export interface EmailAnalysisData {
   highIssues: number;
   mediumIssues: number;
   lowIssues: number;
+  issues: EmailIssue[];
   recommendations: string[];
   technicalDebt: string;
   metrics: {
@@ -86,6 +95,52 @@ export function generateHTMLEmail(data: EmailAnalysisData): string {
       <td style="vertical-align:top;width:22px;padding:0 0 11px;font-size:13px;color:#475569;font-weight:600;">${i + 1}.</td>
       <td style="padding:0 0 11px 8px;font-size:14px;color:#cbd5e1;line-height:1.65;">${r}</td>
     </tr>`).join('');
+
+  const severityStyles: Record<string, { bg: string; border: string; text: string; dot: string }> = {
+    critical: { bg: 'rgba(239,68,68,0.08)',  border: '#7f1d1d', text: '#f87171', dot: '#ef4444' },
+    high:     { bg: 'rgba(249,115,22,0.08)', border: '#7c2d12', text: '#fb923c', dot: '#f97316' },
+    medium:   { bg: 'rgba(234,179,8,0.08)',  border: '#713f12', text: '#fbbf24', dot: '#eab308' },
+    low:      { bg: 'rgba(148,163,184,0.06)',border: '#1e293b', text: '#94a3b8', dot: '#64748b' },
+  };
+
+  // Show critical + high first, then medium, then low — cap at 20 total
+  const sortedIssues = [...data.issues].sort((a, b) => {
+    const order = { critical: 0, high: 1, medium: 2, low: 3 };
+    return order[a.severity] - order[b.severity];
+  }).slice(0, 20);
+
+  const issueRows = sortedIssues.map(issue => {
+    const s = severityStyles[issue.severity] || severityStyles.low;
+    return `
+    <tr>
+      <td style="padding:0 0 8px;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:${s.bg};border:1px solid ${s.border};border-radius:8px;">
+          <tr>
+            <td style="padding:12px 16px;">
+              <!-- Severity + category row -->
+              <table cellpadding="0" cellspacing="0" style="margin-bottom:6px;">
+                <tr>
+                  <td style="vertical-align:middle;padding-right:8px;">
+                    <div style="width:8px;height:8px;border-radius:50%;background:${s.dot};display:inline-block;"></div>
+                  </td>
+                  <td style="vertical-align:middle;padding-right:10px;">
+                    <span style="font-size:10px;font-weight:700;color:${s.text};text-transform:uppercase;letter-spacing:0.08em;">${issue.severity}</span>
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <span style="font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:0.06em;">${issue.category}</span>
+                  </td>
+                  ${issue.line ? `<td style="vertical-align:middle;padding-left:10px;"><span style="font-size:10px;color:#334155;">Line ${issue.line}</span></td>` : ''}
+                </tr>
+              </table>
+              <!-- Message -->
+              <p style="margin:0 0 ${issue.suggestion ? '8px' : '0'};font-size:13px;color:#e2e8f0;line-height:1.55;">${issue.message}</p>
+              ${issue.suggestion ? `<p style="margin:0;font-size:12px;color:#64748b;line-height:1.5;"><span style="color:#4ade80;font-weight:600;">Fix: </span>${issue.suggestion}</p>` : ''}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -147,6 +202,16 @@ export function generateHTMLEmail(data: EmailAnalysisData): string {
           ${severityBadge(data.mediumIssues,   'Medium',   'rgba(234,179,8,0.10)',  '#fbbf24')}
           ${severityBadge(data.lowIssues,      'Low',      'rgba(148,163,184,0.08)','#94a3b8')}
         </tr>
+      </table>
+    </td>
+  </tr>` : ''}
+
+  <!-- ISSUES -->
+  ${sortedIssues.length > 0 ? `<tr>
+    <td style="background:#161b22;border:1px solid #21262d;border-top:1px solid #21262d;border-bottom:none;padding:28px 40px;">
+      <p style="margin:0 0 16px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.1em;">Issues Found (${sortedIssues.length}${data.issues.length > 20 ? ' of ' + data.issues.length : ''})</p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${issueRows}
       </table>
     </td>
   </tr>` : ''}

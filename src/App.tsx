@@ -11,6 +11,7 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [showLanding, setShowLanding] = useState(true);
+  const [showAuth, setShowAuth] = useState(false);
   const [currentView, setCurrentView] = useState<'home' | 'history' | 'snippets'>('home');
   const [restoredAnalysis, setRestoredAnalysis] = useState<any>(null);
 
@@ -24,10 +25,12 @@ function App() {
 
   const handleAuthSuccess = (u: User) => {
     setUser(u);
+    setShowAuth(false);
   };
 
   const handleGetStarted = () => {
     setShowLanding(false);
+    setShowAuth(true);
   };
 
   if (loading) {
@@ -46,8 +49,8 @@ function App() {
     return <LandingPage onGetStarted={handleGetStarted} />;
   }
 
-  // Already logged in — go straight to app
-  if (!user) {
+  // Show auth page when coming from landing, or when not signed in
+  if (showAuth || !user) {
     return <GoogleAuth onAuthSuccess={handleAuthSuccess} />;
   }
 

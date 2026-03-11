@@ -13,6 +13,7 @@ interface GoogleAuthProps {
 }
 
 export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
+  const currentUser = auth.currentUser;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -48,7 +49,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center relative overflow-hidden"
+    <div className="min-h-screen flex items-start justify-center relative overflow-x-hidden overflow-y-auto py-10"
       style={{ background: '#040d1a' }}>
 
       {/* Background blobs */}
@@ -78,6 +79,39 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
         {/* Card */}
         <div className="glass rounded-2xl p-8 space-y-5"
           style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
+
+          {/* Already signed in — continue option */}
+          {currentUser && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 rounded-xl px-4 py-3"
+                style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)' }}>
+                {currentUser.photoURL ? (
+                  <img src={currentUser.photoURL} alt="" className="w-8 h-8 rounded-full" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
+                    <UserIcon className="w-4 h-4 text-white" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-white truncate">{currentUser.displayName || 'Signed in'}</p>
+                  <p className="text-xs text-slate-400 truncate">{currentUser.email}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => onAuthSuccess(currentUser)}
+                className="btn-glow w-full py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition-all"
+                style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
+              >
+                Continue as {currentUser.displayName?.split(' ')[0] || 'me'}
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-white/5" />
+                <span className="text-xs text-slate-600">or sign in with a different account</span>
+                <div className="flex-1 h-px bg-white/5" />
+              </div>
+            </div>
+          )}
 
           {/* Tab switcher */}
           <div className="flex rounded-xl overflow-hidden p-1"

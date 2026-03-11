@@ -156,6 +156,13 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
       highIssues: analysis.summary.highIssues,
       mediumIssues: analysis.summary.mediumIssues,
       lowIssues: analysis.summary.lowIssues,
+      issues: (analysis.issues ?? []).map(i => ({
+        severity: i.severity as 'critical' | 'high' | 'medium' | 'low',
+        category: i.category,
+        message: i.message,
+        line: i.line,
+        suggestion: i.suggestion,
+      })),
       recommendations: analysis.recommendations,
       technicalDebt: analysis.technicalDebt,
       metrics: {
