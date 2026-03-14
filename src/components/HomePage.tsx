@@ -80,6 +80,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
   const [wasAutoFixed, setWasAutoFixed] = useState(false);
+  const [preFixScore, setPreFixScore] = useState<number | null>(null);
   const [autoFixMessage, setAutoFixMessage] = useState<string | null>(null);
   const [analysisHistory, setAnalysisHistory] = useState<AppAnalysis[]>([]);
   const [collabSessionId, setCollabSessionId] = useState<string | null>(null);
@@ -130,6 +131,9 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   // Prefer serverless analysis for accuracy; fallback to local analyzer
   const analyzeCode = async (codeContent: string) => {
     setIsAnalyzing(true);
+    // Fresh manual analysis — reset auto-fix comparison state
+    setWasAutoFixed(false);
+    setPreFixScore(null);
     try {
       const result = await analyzeCodeWithAI(codeContent);
       const newAnalysis: AppAnalysis = { ...result };
@@ -205,19 +209,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     }
   };
 
-  const handleFlagIssue = async (index: number) => {
-    try {
-      await addDoc(collection(db, 'flags'), {
-        uid: user.uid,
-        email: user.email,
-        index,
-        analysisTimestamp: analysis?.timestamp || new Date().toISOString(),
-        flagCreatedAt: serverTimestamp(),
-      });
-    } catch (error) {
-      console.error('Failed to flag issue:', error);
-    }
-  };
 
   const handleChat = async (userMessage: string) => {
     if (!userMessage.trim() || isChatting) return;
@@ -244,6 +235,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       setIsFixing(true);
       setAutoFixMessage(null);
       setWasAutoFixed(false);
+      setPreFixScore(analysis.overallScore);
       setOriginalCode(code);
 
       // 1. Fix the code via AI
@@ -251,10 +243,9 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
       setCode(fixedCode);
       setIsFixing(false);
-      setWasAutoFixed(true);
       setViewMode('diff');
 
-      // 2. Re-analyze the fixed code
+      // 2. Re-analyze the fixed code so the score reflects the actual fixed state
       setAutoFixMessage('✨ Code fixed! Re-analyzing to verify improvements...');
       setIsAnalyzing(true);
       try {
@@ -262,12 +253,15 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         const reAnalysis: AppAnalysis = { ...reResult };
         setAnalysis(reAnalysis);
         setAnalysisHistory(prev => [reAnalysis, ...prev.slice(0, 9)]);
+        // Only mark as auto-fixed after the score is confirmed accurate
+        setWasAutoFixed(true);
         setAutoFixMessage('✓ Code auto-fixed and re-analyzed successfully!');
         setTimeout(() => setAutoFixMessage(null), 5000);
       } catch (analyzeErr) {
         console.warn('Re-analysis after fix failed:', analyzeErr);
-        setAutoFixMessage('✓ Code fixed! Click Analyze to see updated results.');
-        setTimeout(() => setAutoFixMessage(null), 6000);
+        // Don't mark wasAutoFixed — score would not reflect fixed code
+        setAutoFixMessage('⚠ Code fixed but re-analysis failed. Click Analyze to update the score.');
+        setTimeout(() => setAutoFixMessage(null), 7000);
       } finally {
         setIsAnalyzing(false);
       }
@@ -561,8 +555,8 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
             onAutoFix={handleAutoFix}
             sessionId={collabSessionId || currentAnalysisId || ''}
             onRateIssue={handleRateIssue}
-            onFlagIssue={handleFlagIssue}
             wasAutoFixed={wasAutoFixed}
+            preFixScore={preFixScore}
             onIssueClick={(line) => setTargetLine(line)}
             onSaveSnippet={handleSaveSnippet}
           />

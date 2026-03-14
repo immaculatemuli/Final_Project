@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Upload, FileText, Play, Loader2, Folder, X, File, CheckCircle } from 'lucide-react';
-import { analyzeCodeWithAI } from '../services/aiAnalysis';
+import { analyzeCodeWithAI, detectLanguage } from '../services/aiAnalysis';
 import type { AIAnalysisResult } from '../services/aiAnalysis';
 
 // Minimal issue shape needed for highlighting
@@ -506,7 +506,7 @@ async function fetchUserData(userId) {
             </div>
           )}
 
-          {/* Issue count badge + sample code link */}
+          {/* Issue count badge + sample code link + language badge */}
           <div className="flex items-center justify-between mt-2">
             {issues.length > 0 ? (
               <div className="flex items-center gap-2 text-xs">
@@ -526,6 +526,23 @@ async function fetchUserData(userId) {
                 Load sample code
               </button>
             )}
+            {/* Detected language badge */}
+            {(() => {
+              const LANG_COLORS: Record<string, string> = {
+                TypeScript: '#3178c6', JavaScript: '#f0c000', Python: '#3572A5',
+                Java: '#b07219', 'C#': '#178600', 'C/C++': '#6b7280',
+                Go: '#00ADD8', Rust: '#c4600a', PHP: '#4F5D95', Ruby: '#701516',
+              };
+              const lang = code.trim() ? detectLanguage(code) : 'Unknown';
+              if (lang === 'Unknown') return null;
+              const bg = LANG_COLORS[lang] ?? '#475569';
+              const textColor = lang === 'JavaScript' ? '#1a1a1a' : '#fff';
+              return (
+                <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{ background: bg, color: textColor }}>
+                  {lang}
+                </span>
+              );
+            })()}
           </div>
         </div>
       )}

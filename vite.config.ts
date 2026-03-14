@@ -614,17 +614,49 @@ ${numbered}
               const userMessage = body.userMessage as string | undefined;
               if (!userMessage) { sendJSON(res, 400, { error: 'Missing userMessage' }); return; }
 
-              const analysisCtx = analysis
-                ? `Analysis: score=${analysis.overallScore}/100, issues=${(analysis.summary as any)?.totalIssues ?? 0}, debt=${analysis.technicalDebt}`
-                : 'No analysis has been run yet.';
+              // Prepend line numbers so the AI can reference them accurately
+              const numberedCode = code
+                ? code.split('\n').map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`).join('\n')
+                : '';
 
-              const systemPrompt = `You are an expert code assistant. The user is asking about this code:\n\`\`\`\n${code}\n\`\`\`\n${analysisCtx}\nAnswer specifically about THIS code. Reference exact line numbers. Be concise and actionable.`;
+              // Build a rich analysis context including every known issue with its line number
+              let analysisCtx = 'No analysis has been run yet.';
+              if (analysis) {
+                const issues = (analysis.issues as Array<Record<string, unknown>> | undefined) ?? [];
+                const issueLines = issues.map(iss =>
+                  `  - Line ${iss.line ?? '?'} [${iss.severity}] ${iss.category}: ${iss.message}` +
+                  (iss.suggestion ? ` → Fix: ${iss.suggestion}` : '')
+                ).join('\n');
+                analysisCtx = [
+                  `Overall score: ${analysis.overallScore}/100`,
+                  `Language: ${analysis.language ?? 'unknown'}`,
+                  `Technical debt: ${analysis.technicalDebt ?? 'unknown'}`,
+                  issues.length > 0
+                    ? `\nKnown issues (${issues.length} total):\n${issueLines}`
+                    : 'No issues found.',
+                ].join('\n');
+              }
+
+              const systemPrompt = [
+                'You are an expert code assistant. The user is asking about the code shown below.',
+                'The code is provided WITH line numbers on the left (format: "   1: <code>").',
+                'IMPORTANT RULES:',
+                '- When you mention a line, use the exact number shown on the left of that line.',
+                '- Before citing a line number, look at the numbered code and confirm the line exists.',
+                '- Never guess or fabricate line numbers — count from the numbered listing.',
+                '- Quote the actual code from that line when referencing it.',
+                '- Be specific and accurate. If you are unsure of a line number, say so.',
+                '',
+                `CODE:\n\`\`\`\n${numberedCode}\n\`\`\``,
+                '',
+                `ANALYSIS RESULTS:\n${analysisCtx}`,
+              ].join('\n');
 
               const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
                 { role: 'system', content: systemPrompt },
                 ...history,
                 { role: 'user', content: userMessage },
-              ], 1000);
+              ], 1500);
 
               sendJSON(res, 200, { success: true, reply: raw.trim() });
               return;

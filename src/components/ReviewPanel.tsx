@@ -88,8 +88,8 @@ interface ReviewPanelProps {
   onAutoFix: () => void;
   sessionId: string;
   onRateIssue?: (index: number, rating: 1 | -1) => void;
-  onFlagIssue?: (index: number) => void;
   wasAutoFixed?: boolean;
+  preFixScore?: number | null;
   onIssueClick?: (line: number) => void;
   onSaveSnippet?: () => void;
 }
@@ -100,8 +100,8 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   isFixing = false,
   onAutoFix,
   onRateIssue,
-  onFlagIssue,
   wasAutoFixed = false,
+  preFixScore = null,
   onIssueClick,
   onSaveSnippet
 }) => {
@@ -124,14 +124,15 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const emailConfigured = isEmailConfigured();
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Animate score when it changes
+  // Animate score whenever a new analysis object arrives (including re-analysis after auto-fix)
   React.useEffect(() => {
-    if (!analysis) return;
+    if (!analysis) { setDisplayedScore(0); return; }
     const target = analysis.overallScore;
     const duration = 1000;
     const frameDuration = 1000 / 60;
     const totalFrames = Math.round(duration / frameDuration);
     let frame = 0;
+    setDisplayedScore(0);
 
     const timer = setInterval(() => {
       frame++;
@@ -141,7 +142,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
     }, frameDuration);
 
     return () => clearInterval(timer);
-  }, [analysis?.overallScore]);
+  }, [analysis]);
 
   // Build email data object from current analysis
   const buildEmailData = (name: string) => {
@@ -364,25 +365,82 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
         {/* Score ring + actions */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          {/* SVG ring */}
-          <div className="relative flex items-center justify-center w-[84px] h-[84px]">
-            <svg width="84" height="84" viewBox="0 0 72 72">
-              <circle cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5" stroke="#27272a" />
-              <circle
-                cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5"
-                stroke={getScoreColor(analysis.overallScore)}
-                strokeLinecap="round"
-                strokeDasharray={RING_CIRC}
-                strokeDashoffset={RING_CIRC - (displayedScore / 100) * RING_CIRC}
-                transform="rotate(-90 36 36)"
-                style={{ transition: 'stroke-dashoffset 1s cubic-bezier(0.4,0,0.2,1)' }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-xl font-bold leading-none" style={{ color: getScoreColor(analysis.overallScore) }}>{displayedScore}</span>
-              <span className="text-[10px] text-slate-500 leading-none mt-0.5">/ 100</span>
+
+          {/* Before/after score comparison when auto-fixed */}
+          {wasAutoFixed && preFixScore !== null ? (
+            <div className="flex items-center gap-2">
+              {/* Before ring (original) */}
+              <div className="flex flex-col items-center gap-1">
+                <div className="relative flex items-center justify-center w-[60px] h-[60px]">
+                  <svg width="60" height="60" viewBox="0 0 72 72">
+                    <circle cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5" stroke="#27272a" />
+                    <circle
+                      cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5"
+                      stroke={getScoreColor(preFixScore)}
+                      strokeLinecap="round"
+                      strokeDasharray={RING_CIRC}
+                      strokeDashoffset={RING_CIRC - (preFixScore / 100) * RING_CIRC}
+                      transform="rotate(-90 36 36)"
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className="text-sm font-bold leading-none" style={{ color: getScoreColor(preFixScore) }}>{preFixScore}</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-slate-500">Before</span>
+              </div>
+
+              {/* Arrow */}
+              <div className="flex flex-col items-center gap-1 pb-4">
+                <TrendingUp className="w-4 h-4" style={{ color: analysis.overallScore >= preFixScore ? '#4ade80' : '#f87171' }} />
+                <span className="text-xs font-bold" style={{ color: analysis.overallScore >= preFixScore ? '#4ade80' : '#f87171' }}>
+                  {analysis.overallScore >= preFixScore ? '+' : ''}{analysis.overallScore - preFixScore}
+                </span>
+              </div>
+
+              {/* After ring (fixed) */}
+              <div className="flex flex-col items-center gap-1">
+                <div className="relative flex items-center justify-center w-[60px] h-[60px]">
+                  <svg width="60" height="60" viewBox="0 0 72 72">
+                    <circle cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5" stroke="#27272a" />
+                    <circle
+                      cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5"
+                      stroke={getScoreColor(analysis.overallScore)}
+                      strokeLinecap="round"
+                      strokeDasharray={RING_CIRC}
+                      strokeDashoffset={RING_CIRC - (displayedScore / 100) * RING_CIRC}
+                      transform="rotate(-90 36 36)"
+                      style={{ transition: 'stroke-dashoffset 1s cubic-bezier(0.4,0,0.2,1)' }}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className="text-sm font-bold leading-none" style={{ color: getScoreColor(analysis.overallScore) }}>{displayedScore}</span>
+                  </div>
+                </div>
+                <span className="text-[10px] text-slate-500">After</span>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Normal single ring */
+            <div className="relative flex items-center justify-center w-[84px] h-[84px]">
+              <svg width="84" height="84" viewBox="0 0 72 72">
+                <circle cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5" stroke="#27272a" />
+                <circle
+                  cx="36" cy="36" r={RING_R} fill="none" strokeWidth="5"
+                  stroke={getScoreColor(analysis.overallScore)}
+                  strokeLinecap="round"
+                  strokeDasharray={RING_CIRC}
+                  strokeDashoffset={RING_CIRC - (displayedScore / 100) * RING_CIRC}
+                  transform="rotate(-90 36 36)"
+                  style={{ transition: 'stroke-dashoffset 1s cubic-bezier(0.4,0,0.2,1)' }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-xl font-bold leading-none" style={{ color: getScoreColor(analysis.overallScore) }}>{displayedScore}</span>
+                <span className="text-[10px] text-slate-500 leading-none mt-0.5">/ 100</span>
+              </div>
+            </div>
+          )}
 
           {/* Buttons */}
           <div className="flex flex-col gap-1.5">
@@ -638,11 +696,6 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                         className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
                         style={{ background: 'rgba(255,255,255,0.04)', color: '#64748b', border: '1px solid rgba(255,255,255,0.06)' }}
                       >Not helpful</button>
-                      <button
-                        onClick={() => onFlagIssue?.(index)}
-                        className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
-                        style={{ background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.15)' }}
-                      >Flag</button>
                       {issue.references && issue.references.length > 0 && (
                         <a
                           href={issue.references[0]}
