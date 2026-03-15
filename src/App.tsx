@@ -19,6 +19,12 @@ function App() {
     const unsubscribe = auth.onAuthStateChanged((u) => {
       setUser(u);
       setLoading(false);
+      // Skip landing/auth screens for already-authenticated users so that
+      // share links (e.g. ?session=xyz) go straight to the app.
+      if (u) {
+        setShowLanding(false);
+        setShowAuth(false);
+      }
     });
     return () => unsubscribe();
   }, []);

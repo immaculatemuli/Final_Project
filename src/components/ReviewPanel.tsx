@@ -88,6 +88,7 @@ interface ReviewPanelProps {
   onAutoFix: () => void;
   sessionId: string;
   onRateIssue?: (index: number, rating: 1 | -1) => void;
+  onSaveReport?: (type: 'html' | 'email' | 'pdf', recipientEmail?: string, status?: 'downloaded' | 'sent' | 'failed') => void;
   wasAutoFixed?: boolean;
   preFixScore?: number | null;
   onIssueClick?: (line: number) => void;
@@ -100,6 +101,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   isFixing = false,
   onAutoFix,
   onRateIssue,
+  onSaveReport,
   wasAutoFixed = false,
   preFixScore = null,
   onIssueClick,
@@ -687,12 +689,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                     {/* Issue actions */}
                     <div className="flex items-center gap-2 flex-wrap">
                       <button
-                        onClick={() => onRateIssue?.(index, 1)}
+                        onClick={() => onRateIssue?.(analysis.issues.indexOf(issue), 1)}
                         className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
                         style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.2)' }}
                       >Helpful</button>
                       <button
-                        onClick={() => onRateIssue?.(index, -1)}
+                        onClick={() => onRateIssue?.(analysis.issues.indexOf(issue), -1)}
                         className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
                         style={{ background: 'rgba(255,255,255,0.04)', color: '#64748b', border: '1px solid rgba(255,255,255,0.06)' }}
                       >Not helpful</button>
@@ -738,6 +740,50 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                   className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
                 >
                   <Copy className="w-3.5 h-3.5" />Copy
+                </button>
+                <button
+                  onClick={() => {
+                    if (!analysis) return;
+                    const scoreColor = analysis.overallScore >= 70 ? '#22c55e' : analysis.overallScore >= 40 ? '#f59e0b' : '#ef4444';
+                    const issueRows = analysis.issues.map(issue => {
+                      const sc = issue.severity === 'critical' ? '#ef4444' : issue.severity === 'high' ? '#f97316' : issue.severity === 'medium' ? '#eab308' : '#22c55e';
+                      return `<tr>
+                        <td style="color:${sc};font-weight:600;padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.severity.toUpperCase()}</td>
+                        <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.category}</td>
+                        <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.message}</td>
+                        <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#6b7280">${issue.line ? `Line ${issue.line}` : '—'}</td>
+                      </tr>${issue.suggestion ? `<tr><td colspan="4" style="padding:3px 10px 10px;border-bottom:1px solid #e5e7eb;color:#4b5563;font-size:12px">💡 ${issue.suggestion}</td></tr>` : ''}`;
+                    }).join('');
+                    const metricBars = (['complexity','maintainability','readability','performance','security','documentation'] as const).map(k => {
+                      const v = analysis.metrics[k];
+                      const c = v >= 70 ? '#22c55e' : v >= 40 ? '#f59e0b' : '#ef4444';
+                      return `<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:12px;color:#374151">${k.charAt(0).toUpperCase()+k.slice(1)}</span><span style="font-size:12px;font-weight:600">${v}/100</span></div><div style="background:#e5e7eb;border-radius:4px;height:6px"><div style="background:${c};width:${v}%;height:100%;border-radius:4px"></div></div></div>`;
+                    }).join('');
+                    const recs = (analysis.recommendations||[]).map((r,i)=>`<li style="margin-bottom:6px">${r}</li>`).join('');
+                    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Code Analysis Report</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;padding:32px;font-size:14px}h2{font-size:15px;font-weight:600;margin:24px 0 12px;padding-bottom:6px;border-bottom:2px solid #e5e7eb}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#f9fafb;padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;border-bottom:2px solid #e5e7eb}@media print{body{padding:16px}}</style></head><body>
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e5e7eb">
+                        <div><div style="font-size:22px;font-weight:700">Code Analysis Report</div><div style="color:#6b7280;font-size:13px;margin-top:4px">${analysis.language} · ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div></div>
+                        <div style="text-align:right"><div style="font-size:48px;font-weight:800;color:${scoreColor}">${analysis.overallScore}</div><div style="color:#6b7280;font-size:13px">/ 100</div></div>
+                      </div>
+                      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+                        ${[['Critical',analysis.summary.criticalIssues,'#ef4444'],['High',analysis.summary.highIssues,'#f97316'],['Medium',analysis.summary.mediumIssues,'#eab308'],['Low',analysis.summary.lowIssues,'#22c55e']].map(([l,n,c])=>`<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:700;color:${c}">${n}</div><div style="font-size:11px;color:#6b7280;margin-top:2px">${l}</div></div>`).join('')}
+                      </div>
+                      <h2>Issues (${analysis.summary.totalIssues})</h2>
+                      <table><thead><tr><th>Severity</th><th>Category</th><th>Message</th><th>Location</th></tr></thead><tbody>${issueRows}</tbody></table>
+                      <h2>Metrics</h2>${metricBars}
+                      ${recs ? `<h2>Recommendations</h2><ol style="padding-left:20px">${recs}</ol>` : ''}
+                    </body></html>`;
+                    const w = window.open('', '_blank');
+                    if (!w) return;
+                    w.document.write(html);
+                    w.document.close();
+                    w.onload = () => w.print();
+                    onSaveReport?.('pdf', undefined, 'downloaded');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                  style={{ background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  <Download className="w-3.5 h-3.5" />PDF
                 </button>
                 <button
                   onClick={openSendModal}
@@ -902,6 +948,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                     if (d) {
                       const html = generateHTMLEmail(d);
                       downloadEmailHTML(html, recipientName || 'report');
+                      onSaveReport?.('html', undefined, 'downloaded');
                     }
                   }}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-colors"
@@ -925,10 +972,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
                       if (emailConfigured) {
                         await sendAnalysisEmail(d, html);
+                        onSaveReport?.('email', recipientEmail, 'sent');
                         setSendSuccess(`Report sent successfully to ${recipientEmail}!`);
                         setTimeout(closeSendModal, 2500);
                       } else {
                         downloadEmailHTML(html, recipientName);
+                        onSaveReport?.('email', recipientEmail, 'sent');
                         const plain = recommendationToSend;
                         const mailto = `mailto:${recipientEmail}?subject=${encodeURIComponent(`${analysis?.language || 'Code'} Analysis — Score: ${analysis?.overallScore}/100`)}&body=${encodeURIComponent(plain.slice(0, 1800))}`;
                         window.open(mailto, '_blank');
@@ -937,6 +986,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       }
                     } catch (err: unknown) {
                       setSendError(err instanceof Error ? err.message : 'Failed to send email');
+                      onSaveReport?.('email', recipientEmail, 'failed');
                     } finally {
                       setSending(false);
                     }

@@ -75,6 +75,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [tooltipInfo, setTooltipInfo] = useState<TooltipInfo | null>(null);
   const [selectedIssueLine, setSelectedIssueLine] = useState<number | null>(null);
 
@@ -121,15 +122,25 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   const processFiles = async (files: File[]) => {
     setIsUploading(true);
     setUploadProgress(0);
+    setUploadError(null);
     const codeFiles = files.filter(f => {
       const name = f.name.toLowerCase();
       return codeExtensions.some(ext => name.endsWith(ext)) && f.size < 1024 * 1024;
     }).slice(0, 20);
 
     if (!codeFiles.length) {
-      alert('No valid code files found.');
+      const rejected = Array.from(new Set(files.map(f => '.' + f.name.split('.').pop()?.toLowerCase()))).join(', ');
+      setUploadError(`Unsupported file type${files.length > 1 ? 's' : ''}: ${rejected}. Supported: .js .ts .py .java .cpp .go .rs .php .rb and more.`);
       setIsUploading(false);
       return;
+    }
+
+    const skipped = files.length - codeFiles.length;
+    if (skipped > 0) {
+      const rejectedExts = Array.from(new Set(
+        files.filter(f => !codeFiles.includes(f)).map(f => '.' + f.name.split('.').pop()?.toLowerCase())
+      )).join(', ');
+      setUploadError(`${skipped} file${skipped > 1 ? 's' : ''} skipped (unsupported type or over 1 MB): ${rejectedExts}`);
     }
 
     const processed: UploadedFile[] = [];
@@ -210,7 +221,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
       .slice(0, 30);
 
     if (!codeFiles.length) {
-      alert('No code files found. Make sure the folder contains JS, TS, Python, Java, or other supported files.');
+      setUploadError('No supported code files found in this folder. Supported: .js .ts .py .java .cpp .go .rs .php .rb and more.');
       setIsUploading(false);
       return;
     }
@@ -564,6 +575,13 @@ async function fetchUserData(userId) {
               Choose Files
             </label>
           </div>
+          {uploadError && (
+            <div className="flex items-start gap-2 px-4 py-3 rounded-lg text-sm" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5' }}>
+              <span className="flex-shrink-0 font-bold mt-0.5">✕</span>
+              <span>{uploadError}</span>
+              <button onClick={() => setUploadError(null)} className="ml-auto flex-shrink-0 opacity-60 hover:opacity-100">✕</button>
+            </div>
+          )}
           {isUploading && (
             <div className="bg-gray-900 rounded-lg p-4">
               <div className="flex justify-between mb-2 text-sm text-gray-300">
@@ -617,6 +635,13 @@ async function fetchUserData(userId) {
                   Choose Folder
                 </label>
               </div>
+              {uploadError && (
+                <div className="flex items-start gap-2 px-4 py-3 rounded-lg text-sm" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5' }}>
+                  <span className="flex-shrink-0 font-bold mt-0.5">✕</span>
+                  <span>{uploadError}</span>
+                  <button onClick={() => setUploadError(null)} className="ml-auto flex-shrink-0 opacity-60 hover:opacity-100">✕</button>
+                </div>
+              )}
               {isUploading && (
                 <div className="bg-gray-900 rounded-lg px-4 py-3">
                   <div className="flex justify-between mb-1.5 text-xs text-gray-400">

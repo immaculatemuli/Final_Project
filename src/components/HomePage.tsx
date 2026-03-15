@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, signOut } from 'firebase/auth';
 import { auth, db } from '../firebase';
-import { collection, addDoc, Timestamp, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc, limit } from 'firebase/firestore';
+import { collection, addDoc, Timestamp, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc, updateDoc, arrayUnion, limit } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Cpu, History, Bookmark, Copy, ArrowLeftRight, LogOut, User as UserIcon, MessageSquare, X } from 'lucide-react';
+import { Cpu, History, Bookmark, Copy, ArrowLeftRight, LogOut, User as UserIcon, MessageSquare, X, Send } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import ChatPanel from './ChatPanel';
 import { analyzeCodeWithAI, fixCodeWithAI, chatWithAI } from '../services/aiAnalysis';
@@ -93,7 +93,29 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState(false);
+  const [collabComments, setCollabComments] = useState<Array<{ uid: string; displayName: string; text: string; createdAt: string }>>([]);
+  const [commentInput, setCommentInput] = useState('');
+  const [collabOwnerUid, setCollabOwnerUid] = useState<string | null>(null);
+  const [sessionKicked, setSessionKicked] = useState(false);
+  const [collabConnected, setCollabConnected] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
 
+
+  // Auto-join session from URL param (e.g. ?session=abc123)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sessionParam = params.get('session');
+    if (sessionParam) {
+      const sessionId = sessionParam.trim();
+      setCollabSessionId(sessionId);
+      updateDoc(doc(db, 'collabSessions', sessionId), {
+        participants: arrayUnion(user.uid),
+      }).catch(() => {});
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Handle restored analysis from history
   useEffect(() => {
@@ -113,18 +135,19 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const sanitize = (obj: unknown): unknown => JSON.parse(JSON.stringify(obj));
 
   // Save an analysis to Firestore history — separate from AI call so errors don't hide each other
-  const saveToHistory = async (analysis: AppAnalysis, codeSnippet: string) => {
+  const saveToHistory = async (analysis: AppAnalysis, codeSnippet: string): Promise<string | null> => {
     try {
-      // Use Timestamp.fromDate(new Date()) so the timestamp is immediately available
-      // in snapshot listeners (serverTimestamp() has a pending-null state that breaks ordering)
-      await addDoc(collection(db, 'analyses'), {
+      const docRef = await addDoc(collection(db, 'analyses'), {
         uid: user.uid,
         analysis: sanitize(analysis),
         codeSnippet,
         createdAt: Timestamp.fromDate(new Date()),
       });
+      setCurrentAnalysisId(docRef.id);
+      return docRef.id;
     } catch (err) {
       console.error('Failed to save analysis to history:', err);
+      return null;
     }
   };
 
@@ -194,14 +217,13 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
   // Removed unused export/share/email functions
 
-  const handleRateIssue = async (index: number, rating: 1 | -1) => {
+  const handleRateIssue = async (issueIndex: number, rating: 1 | -1) => {
     try {
       await addDoc(collection(db, 'feedback'), {
         uid: user.uid,
-        email: user.email,
-        index,
+        analysisId: currentAnalysisId,
+        issueIndex,
         rating,
-        analysisTimestamp: analysis?.timestamp || new Date().toISOString(),
         feedbackCreatedAt: serverTimestamp(),
       });
     } catch (error) {
@@ -299,17 +321,87 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       code,
       analysis: analysis || null,
       ownerUid: user.uid,
+      participants: [user.uid],
+      comments: [],
+      status: 'active',
+      analysisId: currentAnalysisId,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
     setCollabSessionId(id);
+    setCollabOwnerUid(user.uid);
     setJoinSessionInput(id);
   };
 
-  // Join an existing collaborative session by ID
-  const handleJoinSession = (id: string) => {
-    if (!id) return;
-    setCollabSessionId(id.trim());
+  // Extract session ID from either a raw ID or a full invite URL
+  const extractSessionId = (input: string): string => {
+    const trimmed = input.trim();
+    try {
+      const url = new URL(trimmed);
+      return url.searchParams.get('session') || trimmed;
+    } catch {
+      return trimmed;
+    }
+  };
+
+  // Join an existing collaborative session by ID or invite URL
+  const handleJoinSession = (input: string) => {
+    if (!input) return;
+    const sessionId = extractSessionId(input);
+    if (!sessionId) return;
+    setCollabConnected(false);
+    setCollabSessionId(sessionId);
+    // Best-effort participant tracking — silently ignored if rules block it
+    updateDoc(doc(db, 'collabSessions', sessionId), {
+      participants: arrayUnion(user.uid),
+    }).catch(() => {});
+  };
+
+  const handleSaveReport = async (type: 'html' | 'email' | 'pdf', recipientEmail?: string, status: 'downloaded' | 'sent' | 'failed' = 'downloaded') => {
+    try {
+      await addDoc(collection(db, 'reports'), {
+        uid: user.uid,
+        analysisId: currentAnalysisId,
+        type,
+        recipientEmail: recipientEmail ?? null,
+        status,
+        createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error('Failed to save report record:', err);
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!commentInput.trim() || !collabSessionId) return;
+    const comment = {
+      uid: user.uid,
+      displayName: user.displayName || user.email || 'Anonymous',
+      text: commentInput.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    setCommentInput('');
+    try {
+      await updateDoc(doc(db, 'collabSessions', collabSessionId), {
+        comments: arrayUnion(comment),
+      });
+    } catch (err) {
+      console.error('Failed to add comment:', err);
+    }
+  };
+
+  const handleEndSession = async () => {
+    if (!collabSessionId) return;
+    try {
+      await updateDoc(doc(db, 'collabSessions', collabSessionId), { status: 'closed' });
+    } catch (err) {
+      console.error('Failed to end session:', err);
+    }
+    setCollabSessionId(null);
+    setCollabOwnerUid(null);
+    setCollabComments([]);
+    setCollabConnected(false);
+    setJoinSessionInput('');
   };
 
   // Sync incoming collaborative session updates (code + analysis) to local state
@@ -320,6 +412,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       if (!snap.exists()) return;
       const data = snap.data() as any;
 
+      setCollabConnected(true);
       isRemoteUpdate.current = true;
 
       if (typeof data.code === 'string') {
@@ -336,6 +429,23 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       }
       if (typeof data.wasAutoFixed === 'boolean') {
         setWasAutoFixed(data.wasAutoFixed);
+      }
+      if (Array.isArray(data.comments)) {
+        setCollabComments(data.comments);
+      }
+      if (typeof data.ownerUid === 'string') {
+        setCollabOwnerUid(data.ownerUid);
+      }
+      if (data.status === 'closed' && data.ownerUid !== user.uid) {
+        isRemoteUpdate.current = false;
+        setCollabSessionId(null);
+        setCollabOwnerUid(null);
+        setCollabComments([]);
+        setCollabConnected(false);
+        setJoinSessionInput('');
+        setSessionKicked(true);
+        setTimeout(() => setSessionKicked(false), 4000);
+        return;
       }
 
       // Reset the flag after state updates have been queued
@@ -375,6 +485,15 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   /* ── Render ─────────────────────────────────────── */
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#040d1a', color: '#f1f5f9' }}>
+
+      {/* Session ended banner */}
+      {sessionKicked && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl text-white text-sm font-semibold flex items-center gap-3"
+          style={{ background: 'linear-gradient(135deg, #dc2626, #b91c1c)', boxShadow: '0 8px 32px rgba(220,38,38,0.3)' }}>
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          The host ended this session.
+        </div>
+      )}
 
       {/* Auto-fix banner */}
       {autoFixMessage && (
@@ -420,12 +539,18 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
         {/* User info + sign out */}
         <div className="flex items-center gap-3">
-          {user.photoURL ? (
-            <img src={user.photoURL} alt={user.displayName || 'User'}
-              className="w-7 h-7 rounded-full ring-2 ring-cyan-500/40" />
+          {user.photoURL && !avatarError ? (
+            <img
+              src={user.photoURL}
+              alt={user.displayName || 'User'}
+              className="w-7 h-7 rounded-full ring-2 ring-cyan-500/40"
+              onError={() => setAvatarError(true)}
+            />
           ) : (
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
-              <UserIcon className="w-3.5 h-3.5 text-white" />
+              <span className="text-xs font-bold text-white leading-none">
+                {(user.displayName || user.email || '?')[0].toUpperCase()}
+              </span>
             </div>
           )}
           <span className="hidden md:block text-sm text-slate-400 truncate max-w-[140px]">
@@ -482,14 +607,22 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
             <div className="ml-auto flex items-center gap-2">
               {collabSessionId ? (
                 <div className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                  <span className="text-xs text-slate-400 font-mono">{collabSessionId}</span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${collabConnected ? 'bg-green-400 animate-pulse' : 'bg-yellow-400 animate-pulse'}`} />
+                  <span className="text-xs font-mono" style={{ color: collabConnected ? '#4ade80' : '#facc15' }}>
+                    {collabConnected ? 'Connected' : 'Connecting…'}
+                  </span>
                   <button
-                    onClick={() => { navigator.clipboard.writeText(collabSessionId); }}
-                    className="p-1 text-slate-500 hover:text-slate-300 transition-colors"
-                    title="Copy session ID"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?session=${collabSessionId}`);
+                      setLinkCopied(true);
+                      setTimeout(() => setLinkCopied(false), 2000);
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.05)', color: linkCopied ? '#4ade80' : '#94a3b8' }}
+                    title="Copy invite link"
                   >
                     <Copy className="w-3 h-3" />
+                    {linkCopied ? 'Copied!' : 'Copy link'}
                   </button>
                 </div>
               ) : (
@@ -505,7 +638,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                     type="text"
                     value={joinSessionInput}
                     onChange={(e) => setJoinSessionInput(e.target.value)}
-                    placeholder="Session ID"
+                    placeholder="Session ID or link"
                     className="text-xs px-2 py-1 rounded-lg w-28"
                     style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#f1f5f9', outline: 'none' }}
                   />
@@ -520,6 +653,49 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
               )}
             </div>
           </div>
+
+          {/* Collab comments */}
+          {collabSessionId && (
+            <div className="border-b flex flex-col gap-2 px-4 py-3" style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.15)' }}>
+              {collabComments.length > 0 && (
+                <div className="flex flex-col gap-1 max-h-28 overflow-y-auto">
+                  {collabComments.map((c, i) => (
+                    <div key={i} className="flex gap-2 text-xs">
+                      <span className="text-slate-500 flex-shrink-0">{c.displayName.split(' ')[0]}:</span>
+                      <span className="text-slate-300">{c.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={commentInput}
+                  onChange={e => setCommentInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddComment()}
+                  placeholder="Add a comment…"
+                  className="flex-1 text-xs px-2.5 py-1.5 rounded-lg"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#f1f5f9', outline: 'none' }}
+                />
+                <button
+                  onClick={handleAddComment}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.06)' }}
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+                {collabOwnerUid === user.uid && (
+                  <button
+                    onClick={handleEndSession}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:text-red-300 transition-colors"
+                    style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}
+                  >
+                    End
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Editor / Diff viewer */}
           <div className="flex-1 overflow-auto p-4">
@@ -555,6 +731,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
             onAutoFix={handleAutoFix}
             sessionId={collabSessionId || currentAnalysisId || ''}
             onRateIssue={handleRateIssue}
+            onSaveReport={handleSaveReport}
             wasAutoFixed={wasAutoFixed}
             preFixScore={preFixScore}
             onIssueClick={(line) => setTargetLine(line)}
