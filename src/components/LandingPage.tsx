@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Code2, Shield, Zap, ArrowRight, CheckCircle2, Terminal, Cpu, BarChart3, Lock } from 'lucide-react';
+import { Code2, Shield, Zap, ArrowRight, CheckCircle2, Terminal, Cpu, BarChart3, Lock, X, Play, AlertTriangle, AlertCircle, Info } from 'lucide-react';
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -65,6 +65,260 @@ const ISSUES_DEMO = [
   { sev: 'medium', label: 'Missing Auth Check', line: 1 },
 ];
 
+/* ── Demo Modal ─────────────────────────────────────────── */
+const DEMO_CODE = `function processPayment(amount, user) {
+  const query = \`SELECT * FROM users
+    WHERE id = \${user.id}\`;
+  db.execute(query);
+  charge(user.card, amount);
+}`;
+
+const DEMO_ISSUES = [
+  { sev: 'critical', icon: AlertCircle,  color: '#f87171', label: 'SQL Injection',       line: 2, fix: 'Use parameterized queries: db.execute("SELECT * FROM users WHERE id = ?", [user.id])' },
+  { sev: 'high',     icon: AlertTriangle, color: '#fb923c', label: 'Unvalidated Input',   line: 5, fix: 'Validate and sanitize `amount` before passing to charge()' },
+  { sev: 'medium',   icon: Info,          color: '#facc15', label: 'Missing Auth Check',  line: 1, fix: 'Verify user session/token before executing payment logic' },
+];
+
+const DEMO_METRICS = [
+  { label: 'Security',        before: 18,  after: 91, color: '#06b6d4' },
+  { label: 'Performance',     before: 74,  after: 87, color: '#8b5cf6' },
+  { label: 'Maintainability', before: 55,  after: 82, color: '#ec4899' },
+  { label: 'Readability',     before: 68,  after: 80, color: '#f59e0b' },
+];
+
+type DemoStep = 'idle' | 'scanning' | 'results' | 'fixed';
+
+const DemoModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const [step, setStep] = useState<DemoStep>('idle');
+  const [progress, setProgress] = useState(0);
+  const [expandedIssue, setExpandedIssue] = useState<number | null>(null);
+  const [fixedIssues, setFixedIssues] = useState<number[]>([]);
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  // Scanning animation
+  useEffect(() => {
+    if (step !== 'scanning') return;
+    setProgress(0);
+    const interval = setInterval(() => {
+      setProgress(p => {
+        if (p >= 100) { clearInterval(interval); setStep('results'); return 100; }
+        return p + 2.5;
+      });
+    }, 50);
+    return () => clearInterval(interval);
+  }, [step]);
+
+  const handleAutoFix = () => {
+    setFixedIssues([0, 1, 2]);
+    setTimeout(() => setStep('fixed'), 600);
+  };
+
+  const scoreColor = (s: number) => s >= 80 ? '#4ade80' : s >= 50 ? '#facc15' : '#f87171';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="relative w-full max-w-2xl rounded-2xl overflow-hidden"
+        style={{ background: '#07152a', border: '1px solid rgba(255,255,255,0.08)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
+              <Cpu className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">Intellicode Live Demo</p>
+              <p className="text-xs text-slate-500">payment.js — real-time AI analysis</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+
+          {/* Code block */}
+          <div className="rounded-xl overflow-hidden" style={{ background: '#020810', border: '1px solid rgba(6,182,212,0.15)' }}>
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)', background: 'rgba(0,0,0,0.3)' }}>
+              <div className="flex gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500/70" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500/70" />
+              </div>
+              <span className="text-xs text-slate-500 font-mono ml-2">payment.js</span>
+            </div>
+            <pre className="p-4 text-sm font-mono leading-relaxed overflow-x-auto">
+              {DEMO_CODE.split('\n').map((line, i) => {
+                const isHighlighted = (step === 'results' || step === 'fixed') && (i === 2 || i === 3);
+                return (
+                  <div key={i} className="flex gap-4" style={isHighlighted ? { background: 'rgba(239,68,68,0.08)' } : {}}>
+                    <span className="line-number select-none">{String(i + 1).padStart(2, '0')}</span>
+                    <span style={{ color: isHighlighted ? '#fca5a5' : i === 0 || i === 5 ? '#67e8f9' : '#e2e8f0' }}>{line}</span>
+                    {isHighlighted && <span className="ml-auto text-red-400 text-xs self-center flex-shrink-0">⚠ SQL Injection</span>}
+                  </div>
+                );
+              })}
+            </pre>
+          </div>
+
+          {/* ── IDLE: Run button ── */}
+          {step === 'idle' && (
+            <button
+              onClick={() => setStep('scanning')}
+              className="btn-glow w-full py-3 rounded-xl font-semibold text-white flex items-center justify-center gap-2"
+              style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
+            >
+              <Play className="w-4 h-4" />
+              Run Analysis
+            </button>
+          )}
+
+          {/* ── SCANNING ── */}
+          {step === 'scanning' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-400 flex items-center gap-2">
+                  <span className="w-3 h-3 border-2 border-cyan-400/40 border-t-cyan-400 rounded-full animate-spin inline-block" />
+                  Scanning with Llama 3.3 70B…
+                </span>
+                <span className="text-cyan-400 font-mono font-bold">{Math.round(progress)}%</span>
+              </div>
+              <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #06b6d4, #8b5cf6)' }}
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs text-slate-500">
+                {['Security check', 'Performance', 'Code quality'].map((l, i) => (
+                  <div key={l} className="flex items-center gap-1.5">
+                    {progress > (i + 1) * 30
+                      ? <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+                      : <span className="w-3 h-3 border border-slate-700 rounded-full inline-block" />}
+                    {l}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── RESULTS ── */}
+          {(step === 'results' || step === 'fixed') && (
+            <div className="space-y-4" style={{ animation: 'slide-up 0.4s ease forwards' }}>
+
+              {/* Score banner */}
+              <div className="flex items-center justify-between rounded-xl px-4 py-3"
+                style={{ background: step === 'fixed' ? 'rgba(74,222,128,0.08)' : 'rgba(239,68,68,0.08)', border: `1px solid ${step === 'fixed' ? 'rgba(74,222,128,0.2)' : 'rgba(239,68,68,0.2)'}` }}>
+                <span className="text-sm font-semibold text-slate-300">Overall Health Score</span>
+                <div className="flex items-center gap-3">
+                  {step === 'fixed' && <span className="text-xs text-slate-500 line-through">32/100</span>}
+                  <span className="text-xl font-extrabold" style={{ color: scoreColor(step === 'fixed' ? 88 : 32) }}>
+                    {step === 'fixed' ? '88' : '32'}/100
+                  </span>
+                </div>
+              </div>
+
+              {/* Metrics bars */}
+              <div className="space-y-3">
+                {DEMO_METRICS.map((m) => {
+                  const val = step === 'fixed' ? m.after : m.before;
+                  return (
+                    <div key={m.label} className="space-y-1.5">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-400">{m.label}</span>
+                        <span className="font-bold" style={{ color: m.color }}>{val}/100</span>
+                      </div>
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                        <div className="h-full rounded-full transition-all duration-700"
+                          style={{ width: `${val}%`, background: `linear-gradient(90deg, ${m.color}60, ${m.color})` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Issues list */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Issues Found</p>
+                {DEMO_ISSUES.map((issue, i) => {
+                  const Icon = issue.icon;
+                  const isFixed = fixedIssues.includes(i);
+                  return (
+                    <div key={i}>
+                      <button
+                        onClick={() => setExpandedIssue(expandedIssue === i ? null : i)}
+                        className="w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all"
+                        style={{ background: isFixed ? 'rgba(74,222,128,0.06)' : 'rgba(255,255,255,0.03)', border: `1px solid ${isFixed ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)'}` }}
+                      >
+                        {isFixed
+                          ? <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" />
+                          : <Icon className="w-4 h-4 flex-shrink-0" style={{ color: issue.color }} />}
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold uppercase ${isFixed ? 'line-through text-slate-500' : ''}`}
+                          style={!isFixed ? { background: `${issue.color}20`, color: issue.color } : {}}>
+                          {isFixed ? 'fixed' : issue.sev}
+                        </span>
+                        <span className={`text-sm flex-1 ${isFixed ? 'line-through text-slate-500' : 'text-slate-300'}`}>{issue.label}</span>
+                        <span className="text-xs text-slate-500 font-mono">L{issue.line}</span>
+                      </button>
+                      {expandedIssue === i && !isFixed && (
+                        <div className="mt-1 mx-1 rounded-lg px-4 py-3 text-xs text-slate-400 leading-relaxed"
+                          style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)' }}>
+                          <span className="text-cyan-400 font-semibold">Fix: </span>{issue.fix}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Auto-fix / done */}
+              {step === 'results' ? (
+                <button
+                  onClick={handleAutoFix}
+                  className="btn-glow w-full py-3 rounded-xl font-semibold text-white flex items-center justify-center gap-2"
+                  style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
+                >
+                  <Zap className="w-4 h-4" />
+                  Auto-Fix All Issues
+                </button>
+              ) : (
+                <div className="rounded-xl px-4 py-3 text-sm text-green-400 flex items-center gap-2 font-semibold"
+                  style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)' }}>
+                  <CheckCircle2 className="w-4 h-4" />
+                  All issues patched · Score improved from 32 → 88
+                </div>
+              )}
+
+              {step === 'fixed' && (
+                <button
+                  onClick={onClose}
+                  className="w-full py-3 rounded-xl font-semibold text-white transition-all hover:bg-white/10"
+                  style={{ border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  Try it on your own code →
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Particle component
 const Particle: React.FC<{ style: React.CSSProperties }> = ({ style }) => (
   <div
@@ -75,6 +329,7 @@ const Particle: React.FC<{ style: React.CSSProperties }> = ({ style }) => (
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
   const [navScrolled, setNavScrolled] = useState(false);
+  const [showDemo, setShowDemo] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -94,6 +349,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
 
   return (
     <div className="min-h-screen overflow-x-hidden" style={{ background: '#040d1a', color: '#f1f5f9' }}>
+
+      {showDemo && <DemoModal onClose={() => setShowDemo(false)} />}
 
       {/* ── Navigation ──────────────────────────────── */}
       <nav
@@ -182,7 +439,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
                 Start Free Analysis
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </button>
-              <button className="glass glass-hover px-8 py-4 rounded-xl text-base font-semibold text-slate-300 flex items-center justify-center gap-2">
+              <button
+                onClick={() => setShowDemo(true)}
+                className="glass glass-hover px-8 py-4 rounded-xl text-base font-semibold text-slate-300 flex items-center justify-center gap-2"
+              >
                 <Terminal className="w-4 h-4 text-cyan-400" />
                 View Live Demo
               </button>
