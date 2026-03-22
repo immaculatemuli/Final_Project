@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, FileText, Play, Loader2, Folder, X, File, CheckCircle } from 'lucide-react';
+import { Upload, FileText, Play, Loader2, Folder, X, File, CheckCircle, Github } from 'lucide-react';
 import { analyzeCodeWithAI, detectLanguage } from '../services/aiAnalysis';
 import type { AIAnalysisResult } from '../services/aiAnalysis';
+import RepoExplorer from './RepoExplorer';
 
 // Minimal issue shape needed for highlighting
 interface IssueMarker {
@@ -67,7 +68,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   const gutterRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  const [inputMethod, setInputMethod] = useState<'paste' | 'upload' | 'folder'>('paste');
+  const [inputMethod, setInputMethod] = useState<'paste' | 'upload' | 'folder' | 'github'>('paste');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [folderEntries, setFolderEntries] = useState<FolderEntry[]>([]);
   const [activeFolderIdx, setActiveFolderIdx] = useState<number | null>(null);
@@ -348,7 +349,7 @@ async function fetchUserData(userId) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-white">Code Input</h2>
         <div className="flex space-x-1">
-          {(['paste', 'upload', 'folder'] as const).map(method => (
+          {(['paste', 'upload', 'folder', 'github'] as const).map(method => (
             <button
               key={method}
               onClick={() => setInputMethod(method)}
@@ -357,7 +358,8 @@ async function fetchUserData(userId) {
               {method === 'paste'  && <FileText className="w-3 h-3 inline mr-1" />}
               {method === 'upload' && <Upload   className="w-3 h-3 inline mr-1" />}
               {method === 'folder' && <Folder   className="w-3 h-3 inline mr-1" />}
-              {method.charAt(0).toUpperCase() + method.slice(1)}
+              {method === 'github' && <Github   className="w-3 h-3 inline mr-1" />}
+              {method === 'paste' ? 'Paste' : method === 'upload' ? 'Upload' : method === 'folder' ? 'Folder' : 'GitHub'}
             </button>
           ))}
         </div>
@@ -808,10 +810,23 @@ async function fetchUserData(userId) {
         </div>
       )}
 
+      {/* ------------------------------------------------------------------ */}
+      {/* GITHUB mode — Repo file tree browser                               */}
+      {/* ------------------------------------------------------------------ */}
+      {inputMethod === 'github' && (
+        <RepoExplorer
+          onAnalyze={(repoCode, fileName) => {
+            setCode(repoCode);
+            onAnalyze(repoCode);
+          }}
+          isAnalyzing={isAnalyzing}
+        />
+      )}
 
       {/* ------------------------------------------------------------------ */}
       {/* Analyze button + character count                                    */}
       {/* ------------------------------------------------------------------ */}
+      {inputMethod !== 'github' && (
       <div className="mt-6 flex items-center justify-between">
         <div className="text-sm text-gray-400">
           {code ? (
@@ -835,6 +850,7 @@ async function fetchUserData(userId) {
           </span>
         </button>
       </div>
+      )}
     </div>
   );
 };

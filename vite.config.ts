@@ -229,8 +229,9 @@ export default defineConfig(({ mode }) => {
           const isGithub = url.startsWith('/api/analyzeGithubRepo');
           const isExplain = url.startsWith('/api/explainCode');
           const isChat = url.startsWith('/api/chat');
+          const isRepoTree = url.startsWith('/api/repoTree');
 
-          if (!isAnalyze && !isFix && !isGithub && !isExplain && !isChat) return next();
+          if (!isAnalyze && !isFix && !isGithub && !isExplain && !isChat && !isRepoTree) return next();
 
           // Handle CORS preflight
           if (req.method === 'OPTIONS') {
@@ -659,6 +660,108 @@ ${numbered}
               ], 1500);
 
               sendJSON(res, 200, { success: true, reply: raw.trim() });
+              return;
+            }
+
+            // ----------------------------------------------------------------
+            // /api/repoTree — fetch full file/folder tree from a GitHub repo
+            // ----------------------------------------------------------------
+            if (isRepoTree) {
+              const owner = body.owner as string | undefined;
+              const repo = body.repo as string | undefined;
+              if (!owner || !repo) { sendJSON(res, 400, { error: 'Missing owner or repo' }); return; }
+
+              const ghHeaders = { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' };
+
+              // 1. Fetch repo info
+              const repoResp = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: ghHeaders });
+              if (!repoResp.ok) {
+                const msg = repoResp.status === 404
+                  ? 'Repository not found. Make sure it exists and is public.'
+                  : `GitHub API error: ${repoResp.status}`;
+                sendJSON(res, repoResp.status, { error: msg }); return;
+              }
+              const repoData = await repoResp.json() as Record<string, unknown>;
+              if (repoData.private) { sendJSON(res, 403, { error: 'Cannot browse private repositories.' }); return; }
+
+              const defaultBranch = String(repoData.default_branch ?? 'main');
+              const repoInfo = {
+                fullName: String(repoData.full_name ?? `${owner}/${repo}`),
+                description: String(repoData.description ?? ''),
+                stars: Number(repoData.stargazers_count ?? 0),
+                forks: Number(repoData.forks_count ?? 0),
+                language: String(repoData.language ?? ''),
+                defaultBranch,
+              };
+
+              // 2. Fetch full recursive git tree
+              const treeResp = await fetch(
+                `https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`,
+                { headers: ghHeaders }
+              );
+              if (!treeResp.ok) { sendJSON(res, 500, { error: 'Failed to fetch file tree from GitHub.' }); return; }
+              const treeData = await treeResp.json() as { tree?: Array<{ path: string; type: string; size?: number }> };
+
+              // 3. Build nested structure
+              interface BuildNode { name: string; path: string; type: 'file' | 'dir'; size?: number; download_url?: string; children?: BuildNode[] }
+              const root: BuildNode[] = [];
+              const dirMap: Record<string, BuildNode> = {};
+
+              const getOrCreateDir = (dirPath: string): BuildNode => {
+                if (dirMap[dirPath]) return dirMap[dirPath];
+                const parts = dirPath.split('/');
+                const name = parts[parts.length - 1];
+                const parentPath = parts.slice(0, -1).join('/');
+                const node: BuildNode = { name, path: dirPath, type: 'dir', children: [] };
+                dirMap[dirPath] = node;
+                if (parentPath) {
+                  const parent = getOrCreateDir(parentPath);
+                  parent.children!.push(node);
+                } else {
+                  root.push(node);
+                }
+                return node;
+              };
+
+              const items = (treeData.tree ?? [])
+                .filter(item => !item.path.includes('node_modules') && !item.path.startsWith('.git'))
+                .slice(0, 2000); // safety cap
+
+              for (const item of items) {
+                const parts = item.path.split('/');
+                const name = parts[parts.length - 1];
+                const parentPath = parts.slice(0, -1).join('/');
+
+                if (item.type === 'tree') {
+                  getOrCreateDir(item.path);
+                } else if (item.type === 'blob') {
+                  const fileNode: BuildNode = {
+                    name,
+                    path: item.path,
+                    type: 'file',
+                    size: item.size,
+                    download_url: `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${item.path}`,
+                  };
+                  if (parentPath) {
+                    const parent = getOrCreateDir(parentPath);
+                    parent.children!.push(fileNode);
+                  } else {
+                    root.push(fileNode);
+                  }
+                }
+              }
+
+              // Sort: dirs first, then files, alphabetically
+              const sortNodes = (nodes: BuildNode[]) => {
+                nodes.sort((a, b) => {
+                  if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+                  return a.name.localeCompare(b.name);
+                });
+                nodes.forEach(n => { if (n.children) sortNodes(n.children); });
+              };
+              sortNodes(root);
+
+              sendJSON(res, 200, { success: true, tree: root, repoInfo });
               return;
             }
 

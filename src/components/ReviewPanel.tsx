@@ -635,11 +635,57 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                         {issue.code}
                       </div>
                     )}
-                    <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
-                      <span>Confidence: {issue.confidence}%</span>
-                      <span>Impact: {issue.impact}</span>
-                      <span>Effort: {issue.effort}</span>
-                    </div>
+                    {/* Fix Confidence Score + Impact/Effort */}
+                    {(issue.confidence !== undefined || issue.impact || issue.effort) && (
+                      <div className="flex items-center gap-3 mt-2.5 flex-wrap">
+                        {issue.confidence !== undefined && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Confidence</span>
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                                <div
+                                  className="h-full rounded-full transition-all duration-500"
+                                  style={{
+                                    width: `${issue.confidence}%`,
+                                    background: issue.confidence >= 80 ? '#4ade80' : issue.confidence >= 50 ? '#facc15' : '#f87171',
+                                  }}
+                                />
+                              </div>
+                              <span
+                                className="text-[10px] font-bold tabular-nums"
+                                style={{ color: issue.confidence >= 80 ? '#4ade80' : issue.confidence >= 50 ? '#facc15' : '#f87171' }}
+                              >
+                                {issue.confidence}%
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                        {issue.impact && (
+                          <span
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                            style={{
+                              background: issue.impact === 'high' ? 'rgba(239,68,68,0.12)' : issue.impact === 'medium' ? 'rgba(234,179,8,0.12)' : 'rgba(148,163,184,0.12)',
+                              color: issue.impact === 'high' ? '#f87171' : issue.impact === 'medium' ? '#fbbf24' : '#94a3b8',
+                              border: `1px solid ${issue.impact === 'high' ? 'rgba(239,68,68,0.2)' : issue.impact === 'medium' ? 'rgba(234,179,8,0.2)' : 'rgba(148,163,184,0.15)'}`,
+                            }}
+                          >
+                            {issue.impact} impact
+                          </span>
+                        )}
+                        {issue.effort && (
+                          <span
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                            style={{
+                              background: issue.effort === 'low' ? 'rgba(74,222,128,0.1)' : issue.effort === 'medium' ? 'rgba(234,179,8,0.12)' : 'rgba(239,68,68,0.12)',
+                              color: issue.effort === 'low' ? '#4ade80' : issue.effort === 'medium' ? '#fbbf24' : '#f87171',
+                              border: `1px solid ${issue.effort === 'low' ? 'rgba(74,222,128,0.2)' : issue.effort === 'medium' ? 'rgba(234,179,8,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                            }}
+                          >
+                            {issue.effort} effort
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex-shrink-0 text-slate-600 group-hover:text-slate-400 transition-colors mt-0.5">
