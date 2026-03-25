@@ -79,6 +79,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [tooltipInfo, setTooltipInfo] = useState<TooltipInfo | null>(null);
   const [selectedIssueLine, setSelectedIssueLine] = useState<number | null>(null);
+  const [flashLine, setFlashLine] = useState<number | null>(null);
 
   const codeExtensions = ['.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.cpp', '.c', '.php', '.rb', '.go', '.rs', '.html', '.css', '.scss', '.vue', '.svelte', '.json', '.xml', '.yaml', '.yml', '.md', '.txt'];
 
@@ -100,17 +101,22 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
     if (overlayRef.current) overlayRef.current.scrollTop = scrollTop;
   };
 
-  // Navigate to target line
+  // Navigate to target line and flash it
   useEffect(() => {
     if (targetLine && textareaRef.current) {
       const el = textareaRef.current;
       const lines = code.split('\n');
       const lineIndex = Math.max(0, targetLine - 1);
       el.scrollTo({ top: lineIndex * LINE_H, behavior: 'smooth' });
+      if (gutterRef.current) gutterRef.current.scrollTop = lineIndex * LINE_H;
+      if (overlayRef.current) overlayRef.current.scrollTop = lineIndex * LINE_H;
       el.focus();
       let charPos = 0;
       for (let i = 0; i < lineIndex && i < lines.length; i++) charPos += lines[i].length + 1;
       el.setSelectionRange(charPos, charPos + (lines[lineIndex]?.length || 0));
+      // Flash the line 3 times
+      setFlashLine(targetLine);
+      setTimeout(() => setFlashLine(null), 1500);
       setTimeout(() => onLineNavigated?.(), 500);
     }
   }, [targetLine, code, onLineNavigated]);
@@ -422,6 +428,19 @@ async function fetchUserData(userId) {
                   />
                 );
               })}
+              {/* Flash highlight for navigated line */}
+              {flashLine && (
+                <div
+                  className="absolute w-full"
+                  style={{
+                    top: (flashLine - 1) * LINE_H + PAD_TOP,
+                    height: LINE_H,
+                    animation: 'intelliFlash 1.5s ease-out forwards',
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                  }}
+                />
+              )}
             </div>
 
             {/* Gutter with per-line issue markers */}

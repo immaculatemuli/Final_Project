@@ -699,13 +699,15 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
           {/* Editor / Diff viewer */}
           <div className="flex-1 overflow-auto p-4">
-            {viewMode === 'editor' ? (
+            {/* CodeInput is ALWAYS mounted — hidden in diff mode so its internal
+                state (GitHub tab, repo tree, inputMethod) survives view switches */}
+            <div style={{ display: viewMode === 'editor' ? 'block' : 'none' }}>
               <CodeInput
                 onAnalyze={analyzeCode}
                 isAnalyzing={isAnalyzing}
                 code={code}
                 setCode={setCode}
-                targetLine={targetLine}
+                targetLine={viewMode === 'editor' ? targetLine : null}
                 onLineNavigated={() => setTargetLine(null)}
                 issues={analysis?.issues ?? []}
                 onFolderFileSelect={(name, content, result) => {
@@ -716,7 +718,8 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                   void saveToHistory(a, content);
                 }}
               />
-            ) : (
+            </div>
+            {viewMode === 'diff' && (
               <DiffViewer original={originalCode || ''} modified={code} />
             )}
           </div>
