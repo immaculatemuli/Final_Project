@@ -232,9 +232,6 @@ export async function chatWithAI(
   return result.reply;
 }
 
-// --------------------------------------------------------------------------
-// fixCodeWithAI
-// --------------------------------------------------------------------------
 export async function fixCodeWithAI(
   code: string,
   issues: Array<{ line?: number; severity?: string; message?: string; suggestion?: string }>,
@@ -242,4 +239,22 @@ export async function fixCodeWithAI(
 ): Promise<string> {
   const result = await proxyPost<{ fixedCode: string }>('/api/fixCode', { code, issues, language });
   return result.fixedCode;
+}
+
+// --------------------------------------------------------------------------
+// Email sending via backend mailer
+// --------------------------------------------------------------------------
+export async function sendFixedCodeEmail(
+  to: string,
+  toName: string,
+  subject: string,
+  html: string,
+): Promise<boolean> {
+  const result = await proxyPost<{ success: boolean }>('/mailer', {
+    to,
+    toName,
+    subject,
+    html,
+  });
+  return result.success;
 }

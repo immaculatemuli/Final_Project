@@ -23,7 +23,9 @@ interface FolderEntry {
 }
 
 interface CodeInputProps {
-  onAnalyze: (code: string) => void;
+  onAnalyze: (code: string, fileName?: string) => void;
+  /** Pass a pre-computed analysis result (from bulk scan) to the parent */
+  onResultSelected: (code: string, fileName: string, result: any) => void;
   isAnalyzing: boolean;
   code: string;
   setCode: (code: string) => void;
@@ -836,7 +838,7 @@ async function fetchUserData(userId) {
         <RepoExplorer
           onAnalyze={(repoCode, fileName) => {
             setCode(repoCode);
-            onAnalyze(repoCode);
+            onAnalyze(repoCode, fileName);
           }}
           isAnalyzing={isAnalyzing}
         />
