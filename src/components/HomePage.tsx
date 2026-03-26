@@ -737,14 +737,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                 targetLine={viewMode === 'editor' ? targetLine : null}
                 onLineNavigated={() => setTargetLine(null)}
                 issues={analysis?.issues ?? []}
-                onFolderFileSelect={(name, content, result) => {
-                  const a: AppAnalysis = { ...result, filename: name };
-                  setCode(content);
-                  setAnalysis(a);
-                  setCurrentFileName(name);
-                  setAnalysisHistory(prev => [a, ...prev.slice(0, 9)]);
-                  void saveToHistory(a, content);
-                }}
               />
             </div>
             {viewMode === 'diff' && (

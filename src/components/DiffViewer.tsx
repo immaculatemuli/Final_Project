@@ -158,7 +158,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ original, modified }) =>
       </div>
 
       {/* Split pane */}
-      <div className="grid grid-cols-2 divide-x" style={{ height: '520px', divideColor: 'rgba(255,255,255,0.06)' }}>
+      <div className="grid grid-cols-2 divide-x" style={{ height: '520px', borderColor: 'rgba(255,255,255,0.06)' }}>
 
         {/* ── LEFT: Original ─────────────────────────── */}
         <div
@@ -170,7 +170,6 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ original, modified }) =>
           <div style={{ minWidth: 'max-content' }}>
             {diff.map((row, idx) => {
               if (row.op === 'add') {
-                // Empty spacer to keep left aligned with right's added line
                 return (
                   <div key={idx} className="flex min-h-[24px]" style={{ background: 'rgba(0,0,0,0.15)' }}>
                     <span className="w-10 shrink-0 select-none" />
@@ -181,11 +180,23 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ original, modified }) =>
               }
               const isRemoved = row.op === 'remove';
 
-              // Find the corresponding new line for char-level diff
-              const pairIdx = isRemoved
-                ? diff.findIndex((r, ri) => ri > idx && r.op === 'add' && r.newLine !== null)
-                : -1;
-              const pairLine = pairIdx >= 0 ? diff[pairIdx].newLine ?? '' : null;
+              // Improved pairing: Find the corresponding 'add' in this contiguous block of changes
+              let pairLine: string | null = null;
+              if (isRemoved) {
+                // Find how many 'remove' operations preceded this one in the current block
+                let removeOffset = 0;
+                for (let k = idx - 1; k >= 0 && diff[k].op === 'remove'; k--) removeOffset++;
+                
+                // Find the start of the 'add' block following this 'remove' block
+                let searchIdx = idx + 1;
+                while (searchIdx < diff.length && diff[searchIdx].op === 'remove') searchIdx++;
+                
+                // Match with the add at the same relative offset
+                const targetAddIdx = searchIdx + removeOffset;
+                if (targetAddIdx < diff.length && diff[targetAddIdx].op === 'add') {
+                  pairLine = diff[targetAddIdx].newLine;
+                }
+              }
 
               let parts: { text: string; changed: boolean }[] | null = null;
               if (isRemoved && pairLine !== null) {
@@ -244,10 +255,28 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ original, modified }) =>
               }
               const isAdded = row.op === 'add';
 
-              const pairIdx = isAdded
-                ? diff.findLastIndex((r, ri) => ri < idx && r.op === 'remove' && r.origLine !== null)
-                : -1;
-              const pairLine = pairIdx >= 0 ? diff[pairIdx].origLine ?? '' : null;
+              // Improved pairing: Find the corresponding 'remove' in this contiguous block of changes
+              let pairLine: string | null = null;
+              if (isAdded) {
+                // Find how many 'add' operations preceded this one in the current block
+                let addOffset = 0;
+                for (let k = idx - 1; k >= 0 && diff[k].op === 'add'; k--) addOffset++;
+                
+                // Find the start of the 'remove' block preceding this 'add' block
+                let searchIdx = idx - 1;
+                while (searchIdx >= 0 && diff[searchIdx].op === 'add') searchIdx--;
+                
+                // Match with the remove at the same relative offset (counting backwards from the end of the remove block)
+                // Actually easier to just find the start of the remove block
+                let removeStartIdx = searchIdx;
+                while (removeStartIdx >= 0 && diff[removeStartIdx].op === 'remove') removeStartIdx--;
+                removeStartIdx++; // move to first remove
+                
+                const targetRemoveIdx = removeStartIdx + addOffset;
+                if (targetRemoveIdx <= searchIdx && diff[targetRemoveIdx].op === 'remove') {
+                  pairLine = diff[targetRemoveIdx].origLine;
+                }
+              }
 
               let parts: { text: string; changed: boolean }[] | null = null;
               if (isAdded && pairLine !== null) {
