@@ -4,10 +4,9 @@ import { auth, db } from '../firebase';
 import { collection, addDoc, Timestamp, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc, updateDoc, arrayUnion, limit } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Cpu, History, Bookmark, Copy, ArrowLeftRight, LogOut, User as UserIcon, MessageSquare, X, Send, Share2 } from 'lucide-react';
+import { Cpu, History, Bookmark, Copy, ArrowLeftRight, LogOut, User as UserIcon, MessageSquare, X, Send } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import ChatPanel from './ChatPanel';
-import ShareFixedCodeModal from './ShareFixedCodeModal';
 import { analyzeCodeWithAI, fixCodeWithAI, chatWithAI } from '../services/aiAnalysis';
 import type { ChatMessage } from '../services/aiAnalysis';
 
@@ -61,7 +60,6 @@ interface AppAnalysis {
   technicalDebt: string;
   repository?: Record<string, unknown>;
   timestamp?: string;
-  filename?: string;
   // Optional snippet of the analyzed code for history/restore
   codeSnippet?: string;
 }
@@ -98,12 +96,10 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const [collabComments, setCollabComments] = useState<Array<{ uid: string; displayName: string; text: string; createdAt: string }>>([]);
   const [commentInput, setCommentInput] = useState('');
   const [collabOwnerUid, setCollabOwnerUid] = useState<string | null>(null);
-  const [showShareModal, setShowShareModal] = useState(false);
   const [sessionKicked, setSessionKicked] = useState(false);
   const [collabConnected, setCollabConnected] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
-  const [currentFileName, setCurrentFileName] = useState<string | null>(null);
 
 
   // Auto-join session from URL param (e.g. ?session=abc123)
@@ -128,7 +124,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       if (restoredAnalysis.codeSnippet) {
         setCode(restoredAnalysis.codeSnippet);
       }
-      setCurrentFileName(restoredAnalysis.filename || null);
       // Clear the restored analysis prop so it doesn't re-trigger
       if (clearRestoredAnalysis) {
         clearRestoredAnalysis();
@@ -157,15 +152,14 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   };
 
   // Prefer serverless analysis for accuracy; fallback to local analyzer
-  const analyzeCode = async (codeContent: string, fileName?: string) => {
+  const analyzeCode = async (codeContent: string) => {
     setIsAnalyzing(true);
     // Fresh manual analysis — reset auto-fix comparison state
     setWasAutoFixed(false);
     setPreFixScore(null);
-    if (fileName) setCurrentFileName(fileName);
     try {
       const result = await analyzeCodeWithAI(codeContent);
-      const newAnalysis: AppAnalysis = { ...result, filename: fileName || currentFileName || undefined };
+      const newAnalysis: AppAnalysis = { ...result };
 
       setAnalysis(newAnalysis);
       setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
@@ -183,15 +177,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     } finally {
       setIsAnalyzing(false);
     }
-  };
-
-  const handleBulkResultSelected = (codeContent: string, fileName: string, result: AppAnalysis) => {
-    setCode(codeContent);
-    setCurrentFileName(fileName);
-    setAnalysis(result);
-    setWasAutoFixed(false);
-    setPreFixScore(null);
-    // Optionally save to history if not already there, but here we just show it
   };
 
   // Load user analysis history from Firestore
@@ -592,39 +577,28 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           <div className="px-5 py-3 border-b flex items-center gap-3 flex-wrap"
             style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.2)' }}>
 
-            {/* View mode toggle (only when auto-fixed) + Share button */}
+            {/* View mode toggle (only when auto-fixed) */}
             {originalCode && wasAutoFixed && (
-              <div className="ml-auto flex items-center gap-2">
-                <div className="flex items-center gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <button
-                    onClick={() => setViewMode('editor')}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                    style={viewMode === 'editor'
-                      ? { background: 'rgba(6,182,212,0.2)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.3)' }
-                      : { color: '#64748b' }
-                    }
-                  >
-                    Editor
-                  </button>
-                  <button
-                    onClick={() => setViewMode('diff')}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
-                    style={viewMode === 'diff'
-                      ? { background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }
-                      : { color: '#64748b' }
-                    }
-                  >
-                    <ArrowLeftRight className="w-3 h-3" /> Diff
-                  </button>
-                </div>
-                {/* Share Fixed Code button */}
+              <div className="ml-auto flex items-center gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)' }}>
                 <button
-                  onClick={() => setShowShareModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-all hover:scale-105"
-                  style={{ background: 'linear-gradient(135deg,#06b6d4,#8b5cf6)', boxShadow: '0 4px 16px rgba(6,182,212,0.3)' }}
-                  title="Share fixed code"
+                  onClick={() => setViewMode('editor')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                  style={viewMode === 'editor'
+                    ? { background: 'rgba(6,182,212,0.2)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.3)' }
+                    : { color: '#64748b' }
+                  }
                 >
-                  <Share2 className="w-3 h-3" /> Share
+                  Editor
+                </button>
+                <button
+                  onClick={() => setViewMode('diff')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                  style={viewMode === 'diff'
+                    ? { background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }
+                    : { color: '#64748b' }
+                  }
+                >
+                  <ArrowLeftRight className="w-3 h-3" /> Diff
                 </button>
               </div>
             )}
@@ -730,13 +704,19 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
             <div style={{ display: viewMode === 'editor' ? 'block' : 'none' }}>
               <CodeInput
                 onAnalyze={analyzeCode}
-                onResultSelected={handleBulkResultSelected}
                 isAnalyzing={isAnalyzing}
                 code={code}
                 setCode={setCode}
                 targetLine={viewMode === 'editor' ? targetLine : null}
                 onLineNavigated={() => setTargetLine(null)}
                 issues={analysis?.issues ?? []}
+                onFolderFileSelect={(name, content, result) => {
+                  const a: AppAnalysis = { ...result };
+                  setCode(content);
+                  setAnalysis(a);
+                  setAnalysisHistory(prev => [a, ...prev.slice(0, 9)]);
+                  void saveToHistory(a, content);
+                }}
               />
             </div>
             {viewMode === 'diff' && (
@@ -800,18 +780,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           : <MessageSquare className="w-5 h-5 text-white" />
         }
       </button>
-
-      {/* Share Fixed Code Modal */}
-      {showShareModal && wasAutoFixed && (
-        <ShareFixedCodeModal
-          fixedCode={code}
-          fileName={currentFileName || undefined}
-          language={analysis?.language ?? 'text'}
-          preFixScore={preFixScore}
-          postFixScore={analysis?.overallScore ?? 0}
-          onClose={() => setShowShareModal(false)}
-        />
-      )}
 
     </div>
   );
