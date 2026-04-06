@@ -169,13 +169,23 @@ async function proxyPost<T>(endpoint: string, body: Record<string, unknown>): Pr
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-  } catch {
-    throw new Error('Network error: could not reach the dev server. Make sure `npm run dev` is running.');
+  } catch (err: any) {
+    throw new Error(`Connection failed: ${err.message}. Ensure your internet is working.`);
   }
 
-  const data = await resp.json() as Record<string, unknown>;
+  const contentType = resp.headers.get('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    const text = await resp.text();
+    console.error('Server returned non-JSON response:', text);
+    if (resp.status === 504) throw new Error('Analysis timed out. Try with a smaller code snippet.');
+    if (resp.status === 500) throw new Error('Server error (500). Check Vercel logs or environment variables.');
+    throw new Error(`Server returned error ${resp.status}: ${text.slice(0, 100)}`);
+  }
+
+  const data = await resp.json() as Record<string, any>;
   if (!resp.ok || data.error) {
-    throw new Error(String(data.error ?? `Server error ${resp.status}`));
+    const errorMsg = data.details ? `${data.error}: ${data.details}` : (data.error ?? `Server error ${resp.status}`);
+    throw new Error(String(errorMsg));
   }
   return data as T;
 }

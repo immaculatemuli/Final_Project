@@ -29,3 +29,4 @@ node_modules/
 *.local
 .env
 >>>>>>> ac515f2d10ee14b3104343444ca01dfc4fdbb482
+.vercel

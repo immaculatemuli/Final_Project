@@ -14,16 +14,12 @@
  *       VITE_EMAILJS_TEMPLATE_ID=your_template_id
  */
 
-import emailjs from '@emailjs/browser';
+// Note: Email service now uses our custom /api/sendAnalysisReport backend (SMTP).
 
-const SERVICE_ID  = import.meta.env.VITE_EMAILJS_SERVICE_ID  as string | undefined;
-const TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID as string | undefined;
-const PUBLIC_KEY  = import.meta.env.VITE_EMAILJS_PUBLIC_KEY  as string | undefined;
 
 export function isEmailConfigured(): boolean {
-  // In dev the Vite /mailer endpoint handles sending — always available.
-  if (import.meta.env.DEV) return true;
-  return !!(SERVICE_ID && TEMPLATE_ID && PUBLIC_KEY);
+  // We now use our custom /api/sendAnalysisReport backend for all environments.
+  return true;
 }
 
 // --------------------------------------------------------------------------
@@ -301,41 +297,23 @@ export async function sendAnalysisEmail(
 ): Promise<void> {
   const subject = `${data.language} Code Analysis — Score: ${data.score}/100`;
 
-  // In development, call the Vite dev-server /mailer endpoint (Gmail SMTP).
-  if (import.meta.env.DEV) {
-    const res = await fetch('/mailer', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to:      data.recipientEmail,
-        toName:  data.recipientName,
-        subject,
-        html:    htmlContent,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
-      throw new Error(err.error ?? `Server error ${res.status}`);
-    }
-    return;
-  }
+  // Always use the backend endpoint for both local dev and production.
+  // We use '/api/sendAnalysisReport' for Vercel.
+  const endpoint = import.meta.env.DEV ? '/mailer' : '/api/sendAnalysisReport';
 
-  // In production, fall back to EmailJS if configured.
-  if (!isEmailConfigured()) {
-    throw new Error(
-      'Email sending is not configured for production. Add VITE_EMAILJS_* keys to .env.local.',
-    );
-  }
-
-  await emailjs.send(
-    SERVICE_ID!,
-    TEMPLATE_ID!,
-    {
-      to_name:      data.recipientName,
-      to_email:     data.recipientEmail,
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to:      data.recipientEmail,
+      toName:  data.recipientName,
       subject,
-      html_content: htmlContent,
-    },
-    PUBLIC_KEY!,
-  );
+      html:    htmlContent,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+    throw new Error(err.error ?? `Server error ${res.status}`);
+  }
 }
