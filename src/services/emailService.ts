@@ -1,21 +1,6 @@
 /**
- * Email service — sends AI code analysis reports via EmailJS (browser-based).
- *
- * SETUP (one-time):
- *  1. Sign up free at https://www.emailjs.com
- *  2. Create an Email Service (connect your Gmail)
- *  3. Create an Email Template — set Body type to "HTML" and paste:
- *       {{{html_content}}}
- *     Set the "To Email" field to: {{to_email}}
- *     Set the Subject field to:    {{subject}}
- *  4. Copy your Public Key, Service ID, and Template ID into .env.local:
- *       VITE_EMAILJS_PUBLIC_KEY=your_public_key
- *       VITE_EMAILJS_SERVICE_ID=your_service_id
- *       VITE_EMAILJS_TEMPLATE_ID=your_template_id
+ * Email service — sends AI code analysis reports via the Vercel backend (SMTP).
  */
-
-// Note: Email service now uses our custom /api/sendAnalysisReport backend (SMTP).
-
 
 export function isEmailConfigured(): boolean {
   // We now use our custom /api/sendAnalysisReport backend for all environments.
@@ -99,7 +84,6 @@ export function generateHTMLEmail(data: EmailAnalysisData): string {
     low:      { bg: 'rgba(148,163,184,0.06)',border: '#1e293b', text: '#94a3b8', dot: '#64748b' },
   };
 
-  // Show critical + high first, then medium, then low — cap at 20 total
   const sortedIssues = [...data.issues].sort((a, b) => {
     const order = { critical: 0, high: 1, medium: 2, low: 3 };
     return order[a.severity] - order[b.severity];
@@ -289,7 +273,7 @@ export function downloadEmailHTML(html: string, recipientName: string): void {
 }
 
 // --------------------------------------------------------------------------
-// Send email — uses Vite /mailer endpoint in dev, EmailJS in production
+// Send email — always uses our custom /api/sendAnalysisReport backend.
 // --------------------------------------------------------------------------
 export async function sendAnalysisEmail(
   data: EmailAnalysisData,
