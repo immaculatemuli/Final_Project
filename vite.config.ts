@@ -11,8 +11,6 @@ import nodemailer from 'nodemailer';
 
 function readFunctionsEnv(): Record<string, string> {
   const env: Record<string, string> = {};
-
-  // Parse any .env-style file, handling both LF and CRLF line endings
   const parseEnvFile = (filePath: string) => {
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -25,22 +23,13 @@ function readFunctionsEnv(): Record<string, string> {
         const value = line.slice(eqIdx + 1).trim();
         if (key) env[key] = value;
       }
-    } catch {
-      // file not found — skip silently
-    }
+    } catch { }
   };
-
-  // Primary: functions/.env (OPENAI_API_KEY)
   parseEnvFile(path.resolve('functions/.env'));
-
-  // Fallback: .env.local (VITE_OPENAI_API_KEY → exposed as OPENAI_API_KEY)
   if (!env.OPENAI_API_KEY) {
     parseEnvFile(path.resolve('.env.local'));
-    if (env.VITE_OPENAI_API_KEY) {
-      env.OPENAI_API_KEY = env.VITE_OPENAI_API_KEY;
-    }
+    if (env.VITE_OPENAI_API_KEY) env.OPENAI_API_KEY = env.VITE_OPENAI_API_KEY;
   }
-
   return env;
 }
 
@@ -56,52 +45,44 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
-async function callOpenAI(
-  apiKey: string,
-  baseUrl: string,
-  model: string,
-  messages: Array<{ role: string; content: string }>,
-  maxTokens: number,
-  jsonMode = false,
-  maxRetries = 4,
-): Promise<string> {
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    temperature: 0.1,
-    max_tokens: maxTokens,
-  };
+async function callOpenAI(apiKey: string, baseUrl: string, model: string, messages: any[], maxTokens: number, jsonMode = false) {
+  const body: any = { model, messages, temperature: 0.1, max_tokens: maxTokens };
   if (jsonMode) body.response_format = { type: 'json_object' };
+  
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const resp = await fetch(baseUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(body),
-    });
+      const resp = await fetch(baseUrl, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${apiKey}`,
+          'User-Agent': 'Intellicode-Analysis-Engine/1.0'
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
 
-    if (resp.ok) {
-      const data = await resp.json() as { choices: Array<{ message: { content: string } }> };
-      return data.choices[0].message.content;
+      if (resp.ok) {
+        const data = await resp.json() as any;
+        return data.choices[0].message.content;
+      }
+      
+      const text = await resp.text();
+      throw new Error(`AI API error ${resp.status}: ${text}`);
+    } catch (err: any) {
+      lastErr = err;
+      if (err.name === 'AbortError') throw new Error('AI analysis timed out after 45 seconds. The code might be too complex or the service is slow.');
+      console.error(`AI call attempt ${attempt} failed:`, err.message);
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1000)); // wait 1s before retry
     }
-
-    const text = await resp.text();
-
-    // Rate-limited: parse the exact wait time from Groq's error message and retry
-    if (resp.status === 429 && attempt < maxRetries) {
-      const secMatch = text.match(/try again in (\d+\.?\d*)s/i);
-      const waitMs = secMatch
-        ? Math.ceil(parseFloat(secMatch[1]) * 1000) + 2000   // add 2s buffer
-        : (attempt + 1) * 20000;                              // fallback: 20s, 40s…
-      console.log(`[AI Proxy] Rate limited — waiting ${Math.ceil(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries})…`);
-      await new Promise(r => setTimeout(r, waitMs));
-      continue;
-    }
-
-    throw new Error(`AI API error ${resp.status}: ${text.slice(0, 300)}`);
   }
-
-  throw new Error('AI API: max retries exceeded after rate-limit waits');
+  throw lastErr || new Error('AI connection failed after retries');
 }
 
 function parseJSON(text: string): unknown {
@@ -125,660 +106,178 @@ function sendJSON(res: ServerResponse, status: number, data: unknown) {
   res.end(JSON.stringify(data));
 }
 
-// ---------------------------------------------------------------------------
-// Vite config
-// ---------------------------------------------------------------------------
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-
-  // Read .env.local directly so the key is always picked up regardless of Vite prefix rules
   const directEnv = readFunctionsEnv();
-  // Also parse .env.local itself
-  (() => {
-    try {
-      const content = fs.readFileSync(path.resolve('.env.local'), 'utf-8');
-      for (const rawLine of content.split(/\r?\n/)) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('#')) continue;
-        const eqIdx = line.indexOf('=');
-        if (eqIdx === -1) continue;
-        const key = line.slice(0, eqIdx).trim();
-        const value = line.slice(eqIdx + 1).trim();
-        if (key && !directEnv[key]) directEnv[key] = value;
-      }
-    } catch { /* ignore */ }
-  })();
-
   const GROQ_KEY = directEnv.VITE_GROQ_API_KEY || directEnv.GROQ_API_KEY || env.VITE_GROQ_API_KEY || '';
   const OPENAI_KEY = directEnv.OPENAI_API_KEY || directEnv.VITE_OPENAI_API_KEY || env.OPENAI_API_KEY || '';
+  const ENABLE_OPENAI_FALLBACK = (directEnv.ENABLE_OPENAI_FALLBACK || env.ENABLE_OPENAI_FALLBACK || '').toLowerCase() === 'true';
   const AI_KEY = GROQ_KEY || OPENAI_KEY;
-  const AI_BASE_URL = GROQ_KEY
-    ? 'https://api.groq.com/openai/v1/chat/completions'
-    : 'https://api.openai.com/v1/chat/completions';
-  const AI_MODEL = GROQ_KEY ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini';
-
-  console.log(`[AI Proxy] Using: ${GROQ_KEY ? `Groq ✓ (key: ${GROQ_KEY.slice(0, 8)}...)` : OPENAI_KEY ? `OpenAI (key: ${OPENAI_KEY.slice(0, 8)}...)` : '⚠ NO API KEY FOUND'}`);
+  const AI_BASE_URL = GROQ_KEY ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
+  const AI_MODEL = GROQ_KEY ? (directEnv.VITE_GROQ_MODEL || env.VITE_GROQ_MODEL || 'llama-3.1-8b-instant') : 'gpt-4o-mini';
 
   return {
     plugins: [
-    react(),
-    // ---- OpenAI proxy (dev only) ----------------------------------------
-    // Intercepts /api/analyzeCode, /api/fixCode, /api/analyzeGithubRepo
-    // and calls OpenAI server-side so the API key never reaches the browser.
-    {
-      name: 'openai-proxy',
-      configureServer(server) {
-        server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
-          const url = req.url ?? '';
+      react(),
+      {
+        name: 'openai-proxy',
+        configureServer(server) {
+          server.middlewares.use(async (req, res, next) => {
+            const url = req.url ?? '';
+            if (url.startsWith('/api/ping')) { 
+              let internetOk = false;
+              try {
+                const test = await fetch('https://api.github.com/zen', { signal: AbortSignal.timeout(2000) });
+                internetOk = test.ok;
+              } catch { internetOk = false; }
+              sendJSON(res, 200, { keyFound: !!AI_KEY, internetOk }); 
+              return; 
+            }
 
-          // ------------------------------------------------------------------
-          // /api/ping — key diagnostic
-          // ------------------------------------------------------------------
-          if (url.startsWith('/api/ping')) {
-            sendJSON(res, 200, {
-              keyFound: !!OPENAI_KEY,
-              keyPrefix: OPENAI_KEY ? OPENAI_KEY.slice(0, 12) + '...' : null,
-            });
-            return;
-          }
+            if (url.startsWith('/mailer')) {
+              try {
+                const body = await readBody(req);
+                const { to, toName, subject, html } = body as any;
+                const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user: 'muliimaculate@gmail.com', pass: 'yajaeijnwxbstnsw' } });
+                await transporter.sendMail({ from: '"Intellicode" <muliimaculate@gmail.com>', to: toName ? `"${toName}" <${to}>` : to, subject, html });
+                sendJSON(res, 200, { success: true });
+              } catch (err: any) { sendJSON(res, 500, { error: err.message }); }
+              return;
+            }
 
-          // ------------------------------------------------------------------
-          // /mailer — Gmail SMTP email sender (bypasses the /api proxy)
-          // ------------------------------------------------------------------
-          if (url.startsWith('/mailer')) {
+            const isAnalyze = url.startsWith('/api/analyzeCode');
+            const isFix = url.startsWith('/api/fixCode');
+            const isGithub = url.startsWith('/api/analyzeGithubRepo');
+            const isExplain = url.startsWith('/api/explainCode');
+            const isChat = url.startsWith('/api/chat');
+            const isRepoTree = url.startsWith('/api/repoTree');
+
+            if (!isAnalyze && !isFix && !isGithub && !isExplain && !isChat && !isRepoTree) return next();
+
             if (req.method === 'OPTIONS') {
               res.setHeader('Access-Control-Allow-Origin', '*');
               res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
               res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
               res.writeHead(204); res.end(); return;
             }
-            if (req.method !== 'POST') {
-              sendJSON(res, 405, { error: 'Method Not Allowed' }); return;
-            }
-            try {
-              const body = await readBody(req);
-              const { to, toName, subject, html } = body as Record<string, string>;
-              if (!to || !html) { sendJSON(res, 400, { error: 'Missing to or html' }); return; }
 
-              const GMAIL_USER = 'muliimaculate@gmail.com';
-              const GMAIL_PASS = 'yajaeijnwxbstnsw';
-
-              const transporter = nodemailer.createTransport({
-                service: 'gmail',
-                auth: { user: GMAIL_USER, pass: GMAIL_PASS },
-              });
-
-              await transporter.sendMail({
-                from: `"AI Code Intelligence" <${GMAIL_USER}>`,
-                to: toName ? `"${toName}" <${to}>` : to,
-                subject: subject || 'Code Analysis Report',
-                html,
-              });
-
-              sendJSON(res, 200, { success: true });
-            } catch (err: unknown) {
-              const msg = err instanceof Error ? err.message : String(err);
-              console.error('[mailer]', msg);
-              sendJSON(res, 500, { error: msg });
-            }
-            return;
-          }
-
-          const isAnalyze = url.startsWith('/api/analyzeCode');
-          const isFix = url.startsWith('/api/fixCode');
-          const isGithub = url.startsWith('/api/analyzeGithubRepo');
-          const isExplain = url.startsWith('/api/explainCode');
-          const isChat = url.startsWith('/api/chat');
-          const isRepoTree = url.startsWith('/api/repoTree');
-
-          if (!isAnalyze && !isFix && !isGithub && !isExplain && !isChat && !isRepoTree) return next();
-
-          // Handle CORS preflight
-          if (req.method === 'OPTIONS') {
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-            res.writeHead(204);
-            res.end();
-            return;
-          }
-
-          const apiKey = AI_KEY;
-          if (!apiKey) {
-            sendJSON(res, 500, { error: 'No API key found. Set VITE_GROQ_API_KEY (free) or VITE_OPENAI_API_KEY in .env.local' });
-            return;
-          }
-
-          try {
-            const body = await readBody(req);
-
-            // ----------------------------------------------------------------
-            // /api/analyzeCode
-            // ----------------------------------------------------------------
-            if (isAnalyze) {
-              const code = body.code as string | undefined;
-              const langHint = (body.language as string | undefined) || 'unknown';
-              if (!code) { sendJSON(res, 400, { error: 'Missing code parameter' }); return; }
-
-              const numbered = code.split('\n')
-                .map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`)
-                .join('\n');
-
-              const prompt = `You are a senior code reviewer. Analyze the code below and return a JSON object.
-
-Be THOROUGH and REALISTIC:
-- Find every bug, security hole, performance issue, logic error, anti-pattern, and bad practice
-- Assign realistic scores (bad code should score low, good code should score high)
-- For every issue give the EXACT line number and a corrected version of that specific line
-
-Return ONLY this JSON (no markdown, no extra text):
-{
-  "overallScore": <integer 0-100>,
-  "language": "<detected language>",
-  "issues": [
-    {
-      "severity": "critical" | "high" | "medium" | "low",
-      "category": "Security" | "Performance" | "Logic" | "Code Quality" | "Best Practices",
-      "message": "<clear description of what is wrong>",
-      "line": <exact 1-based line number>,
-      "code": "<the exact problematic line, trimmed>",
-      "suggestion": "<how to fix it in one sentence>",
-      "fixedCode": "<the corrected line, trimmed>"
-    }
-  ],
-  "metrics": {
-    "complexity": <0-100>,
-    "maintainability": <0-100>,
-    "readability": <0-100>,
-    "performance": <0-100>,
-    "security": <0-100>,
-    "documentation": <0-100>
-  },
-  "recommendations": ["<top actionable recommendation>", "<rec 2>", "<rec 3>"],
-  "technicalDebt": "<estimated fix effort e.g. '3 hours'>",
-  "codeSmells": <integer count>
-}
-
-Code (line numbers prepended):
-\`\`\`
-${numbered}
-\`\`\``;
-
-              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
-                { role: 'system', content: 'You are an expert code reviewer. Output valid JSON only. Be accurate and thorough.' },
-                { role: 'user', content: prompt },
-              ], 2500, true);
-
-              const d = parseJSON(raw) as Record<string, unknown>;
-              const issues = (d.issues as unknown[] || []) as Array<Record<string, unknown>>;
-              const metrics = (d.metrics as Record<string, number> | undefined) ?? {};
-
-              const analysis = {
-                language: (d.language as string) || langHint,
-                overallScore: Math.max(0, Math.min(100, Number(d.overallScore) || 75)),
-                issues: issues.map((issue, idx) => ({
-                  id: `issue-${idx}`,
-                  type: String(issue.category ?? 'general').toLowerCase().replace(/\s+/g, '-'),
-                  severity: issue.severity || 'medium',
-                  category: issue.category || 'Code Quality',
-                  message: issue.message || 'Issue detected',
-                  line: Number(issue.line) || 0,
-                  column: 1,
-                  code: issue.code || '',
-                  suggestion: issue.suggestion || '',
-                  fixedCode: issue.fixedCode || '',
-                  confidence: 92,
-                  impact: issue.severity === 'critical' ? 'high' : issue.severity === 'high' ? 'medium' : 'low',
-                  effort: issue.severity === 'critical' ? 'high' : 'medium',
-                })),
-                metrics: {
-                  complexity: metrics.complexity ?? 50,
-                  maintainability: metrics.maintainability ?? 75,
-                  readability: metrics.readability ?? 75,
-                  performance: metrics.performance ?? 75,
-                  security: metrics.security ?? 75,
-                  documentation: metrics.documentation ?? 50,
-                  cyclomaticComplexity: Math.max(1, Math.floor((metrics.complexity ?? 50) / 10)),
-                  cognitiveComplexity: Math.max(1, Math.floor((metrics.complexity ?? 50) / 12)),
-                  linesOfCode: code.split('\n').length,
-                  duplicateLines: 0,
-                  testCoverage: 0,
-                },
-                summary: {
-                  totalIssues: issues.length,
-                  criticalIssues: issues.filter(i => i.severity === 'critical').length,
-                  highIssues: issues.filter(i => i.severity === 'high').length,
-                  mediumIssues: issues.filter(i => i.severity === 'medium').length,
-                  lowIssues: issues.filter(i => i.severity === 'low').length,
-                  securityIssues: issues.filter(i => i.category === 'Security').length,
-                  performanceIssues: issues.filter(i => i.category === 'Performance').length,
-                  qualityIssues: issues.filter(i => i.category === 'Code Quality').length,
-                },
-                recommendations: (d.recommendations as string[]) || [],
-                codeSmells: Number(d.codeSmells) || 0,
-                technicalDebt: String(d.technicalDebt || 'Unknown'),
-                timestamp: new Date().toISOString(),
-              };
-
-              sendJSON(res, 200, { success: true, analysis });
-              return;
-            }
-
-            // ----------------------------------------------------------------
-            // /api/fixCode
-            // ----------------------------------------------------------------
-            if (isFix) {
-              const code = body.code as string | undefined;
-              const issues = (body.issues as Array<Record<string, unknown>> | undefined) || [];
-              const lang = (body.language as string | undefined) || 'code';
-              if (!code) { sendJSON(res, 400, { error: 'Missing code parameter' }); return; }
-
-              const issueList = issues.length
-                ? issues.map(i => `  Line ${i.line}: [${i.severity}] ${i.message} → ${i.suggestion || 'Fix this'}`).join('\n')
-                : '  Improve overall code quality, fix all bugs and security issues.';
-
-              const prompt = `Fix ALL the listed issues in this ${lang} code.
-
-Issues to fix:
-${issueList}
-
-Rules:
-- Return ONLY the complete corrected source code
-- Do NOT include markdown fences, backticks, or any explanation
-- Fix every listed issue precisely
-- Preserve the original structure, logic, and indentation style
-- Do not add unnecessary changes
-
-Code to fix:
-${code}`;
-
-              const rawFixed = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
-                { role: 'system', content: 'You are a precise code repair engine. Return only the fixed source code. Absolutely no markdown, no backticks, no explanations.' },
-                { role: 'user', content: prompt },
-              ], 4000);
-
-              let fixedCode = rawFixed.trim();
-              if (fixedCode.startsWith('```')) {
-                fixedCode = fixedCode.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
-              }
-
-              sendJSON(res, 200, { success: true, fixedCode });
-              return;
-            }
-
-            // ----------------------------------------------------------------
-            // /api/analyzeGithubRepo
-            // ----------------------------------------------------------------
-            if (isGithub) {
-              const repoUrl = body.repoUrl as string | undefined;
-              const uid = body.uid;
-              if (!repoUrl) { sendJSON(res, 400, { error: 'Missing repoUrl parameter' }); return; }
-
-              const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-              if (!match) { sendJSON(res, 400, { error: 'Invalid GitHub repository URL' }); return; }
-
-              const [, owner, repo] = match;
-              const repoName = repo.replace(/\.git$/, '');
-
-              // Fetch repo info
-              const repoResp = await fetch(`https://api.github.com/repos/${owner}/${repoName}`, {
-                headers: { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' },
-              });
-              if (!repoResp.ok) {
-                sendJSON(res, repoResp.status, { error: `GitHub API error: ${repoResp.status}` });
-                return;
-              }
-              const repoInfo = await repoResp.json() as Record<string, unknown>;
-              if (repoInfo.private) { sendJSON(res, 403, { error: 'Cannot analyze private repositories' }); return; }
-
-              // Fetch file list
-              const contentsResp = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents`, {
-                headers: { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' },
-              });
-              if (!contentsResp.ok) { sendJSON(res, 500, { error: 'Failed to fetch repository contents' }); return; }
-              const files = await contentsResp.json() as Array<Record<string, unknown>>;
-
-              const codeExts = ['.js', '.ts', '.py', '.java', '.jsx', '.tsx', '.php', '.rb', '.go', '.cpp', '.c'];
-              const codeFiles = files.filter(f =>
-                f.type === 'file' && codeExts.some(ext => (f.name as string).endsWith(ext))
-              ).slice(0, 5);
-              if (!codeFiles.length) { sendJSON(res, 400, { error: 'No code files found in repository root' }); return; }
-
-              const firstFile = codeFiles[0];
-              const fileResp = await fetch(firstFile.download_url as string);
-              const codeContent = await fileResp.text();
-
-              if (codeContent.length > 60 * 1024) {
-                sendJSON(res, 413, { error: `File ${firstFile.name} is too large (> 60 KB)` });
-                return;
-              }
-
-              const language = (firstFile.name as string).split('.').pop() || 'unknown';
-              const numbered = codeContent.split('\n')
-                .map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`)
-                .join('\n');
-
-              const prompt = `Analyze this ${language} file from GitHub (${owner}/${repoName}/${firstFile.name}).
-Find ALL issues: bugs, security holes, performance problems, bad practices.
-For each issue give the EXACT line number and corrected line.
-
-Return ONLY valid JSON:
-{
-  "overallScore": <0-100>,
-  "language": "${language}",
-  "issues": [{"severity":"...","category":"...","message":"...","line":<n>,"code":"...","suggestion":"...","fixedCode":"..."}],
-  "metrics": {"complexity":0,"maintainability":0,"readability":0,"performance":0,"security":0,"documentation":0},
-  "recommendations": ["..."],
-  "technicalDebt": "...",
-  "codeSmells": 0
-}
-
-Code:
-\`\`\`
-${numbered}
-\`\`\``;
-
-              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
-                { role: 'system', content: 'Expert code reviewer. JSON output only.' },
-                { role: 'user', content: prompt },
-              ], 2500, true);
-
-              const d = parseJSON(raw) as Record<string, unknown>;
-              const issues = (d.issues as unknown[] || []) as Array<Record<string, unknown>>;
-              const metrics = (d.metrics as Record<string, number> | undefined) ?? {};
-
-              const analysis = {
-                language,
-                overallScore: Math.max(0, Math.min(100, Number(d.overallScore) || 75)),
-                repository: {
-                  owner, name: repoName, url: repoUrl,
-                  stars: repoInfo.stargazers_count,
-                  forks: repoInfo.forks_count,
-                  description: repoInfo.description,
-                  language: repoInfo.language,
-                  analyzedFile: firstFile.name,
-                  totalFilesFound: codeFiles.length,
-                  analyzedFileContent: codeContent,
-                },
-                sourceCode: codeContent,
-                issues: issues.map((issue, idx) => ({
-                  id: `issue-${idx}`,
-                  type: String(issue.category ?? 'general').toLowerCase().replace(/\s+/g, '-'),
-                  severity: issue.severity || 'medium',
-                  category: issue.category || 'Code Quality',
-                  message: issue.message || 'Issue detected',
-                  line: Number(issue.line) || 0,
-                  column: 1,
-                  code: issue.code || '',
-                  suggestion: issue.suggestion || '',
-                  fixedCode: issue.fixedCode || '',
-                  confidence: 90,
-                  impact: issue.severity === 'critical' ? 'high' : 'medium',
-                  effort: 'medium',
-                })),
-                metrics: {
-                  complexity: metrics.complexity ?? 50,
-                  maintainability: metrics.maintainability ?? 75,
-                  readability: metrics.readability ?? 75,
-                  performance: metrics.performance ?? 75,
-                  security: metrics.security ?? 75,
-                  documentation: metrics.documentation ?? 50,
-                  cyclomaticComplexity: Math.max(1, Math.floor((metrics.complexity ?? 50) / 10)),
-                  cognitiveComplexity: Math.max(1, Math.floor((metrics.complexity ?? 50) / 12)),
-                  linesOfCode: codeContent.split('\n').length,
-                  duplicateLines: 0,
-                  testCoverage: 0,
-                },
-                summary: {
-                  totalIssues: issues.length,
-                  criticalIssues: issues.filter(i => i.severity === 'critical').length,
-                  highIssues: issues.filter(i => i.severity === 'high').length,
-                  mediumIssues: issues.filter(i => i.severity === 'medium').length,
-                  lowIssues: issues.filter(i => i.severity === 'low').length,
-                  securityIssues: issues.filter(i => i.category === 'Security').length,
-                  performanceIssues: issues.filter(i => i.category === 'Performance').length,
-                  qualityIssues: issues.filter(i => i.category === 'Code Quality').length,
-                },
-                recommendations: (d.recommendations as string[]) || [],
-                codeSmells: Number(d.codeSmells) || 0,
-                technicalDebt: String(d.technicalDebt || 'Unknown'),
-                timestamp: new Date().toISOString(),
-              };
-
-              sendJSON(res, 200, { success: true, analysis, analysisId: null });
-              return;
-            }
-
-            // ----------------------------------------------------------------
-            // /api/explainCode
-            // ----------------------------------------------------------------
-            if (isExplain) {
-              const code = body.code as string | undefined;
-              if (!code) { sendJSON(res, 400, { error: 'Missing code parameter' }); return; }
-
-              const numbered = code.split('\n')
-                .map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`)
-                .join('\n');
-
-              const prompt = `You are an expert software engineer. Explain the following code in plain English for a junior developer.
-
-Return ONLY valid JSON — no markdown, no extra text:
-{
-  "language": "<detected language>",
-  "purpose": "<one sentence: what the code does>",
-  "overview": "<2-3 sentence high-level explanation>",
-  "complexity": "Simple" | "Moderate" | "Complex",
-  "sections": [{"title":"<name>","lines":"<e.g. 1-5>","explanation":"<plain English>"}],
-  "inputs": ["<param: description>"],
-  "outputs": "<what it returns or produces>",
-  "dependencies": ["<library>"],
-  "audience": "<who would use this>",
-  "keyPoints": ["<key insight>", "<another insight>"]
-}
-
-Code (line numbers prepended):
-\`\`\`
-${numbered}
-\`\`\``;
-
-              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
-                { role: 'system', content: 'Expert code explainer. Output valid JSON only.' },
-                { role: 'user', content: prompt },
-              ], 1500, true);
-
-              const d = parseJSON(raw) as Record<string, unknown>;
-              const explanation = {
-                language: String(d.language ?? 'Unknown'),
-                purpose: String(d.purpose ?? ''),
-                overview: String(d.overview ?? ''),
-                complexity: (['Simple', 'Moderate', 'Complex'].includes(String(d.complexity)) ? d.complexity : 'Moderate') as string,
-                sections: ((d.sections as Array<Record<string, string>> | undefined) ?? []).map(s => ({
-                  title: String(s.title ?? ''), lines: String(s.lines ?? ''), explanation: String(s.explanation ?? ''),
-                })),
-                inputs: ((d.inputs as string[] | undefined) ?? []).map(String),
-                outputs: String(d.outputs ?? ''),
-                dependencies: ((d.dependencies as string[] | undefined) ?? []).map(String),
-                audience: String(d.audience ?? ''),
-                keyPoints: ((d.keyPoints as string[] | undefined) ?? []).map(String),
-              };
-              sendJSON(res, 200, { success: true, explanation });
-              return;
-            }
-
-            // ----------------------------------------------------------------
-            // /api/chat
-            // ----------------------------------------------------------------
-            if (isChat) {
-              const code = (body.code as string | undefined) ?? '';
-              const analysis = body.analysis as Record<string, unknown> | null | undefined;
-              const history = (body.history as Array<{ role: string; content: string }> | undefined) ?? [];
-              const userMessage = body.userMessage as string | undefined;
-              if (!userMessage) { sendJSON(res, 400, { error: 'Missing userMessage' }); return; }
-
-              // Prepend line numbers so the AI can reference them accurately
-              const numberedCode = code
-                ? code.split('\n').map((l, i) => `${String(i + 1).padStart(4, ' ')}: ${l}`).join('\n')
-                : '';
-
-              // Build a rich analysis context including every known issue with its line number
-              let analysisCtx = 'No analysis has been run yet.';
-              if (analysis) {
-                const issues = (analysis.issues as Array<Record<string, unknown>> | undefined) ?? [];
-                const issueLines = issues.map(iss =>
-                  `  - Line ${iss.line ?? '?'} [${iss.severity}] ${iss.category}: ${iss.message}` +
-                  (iss.suggestion ? ` → Fix: ${iss.suggestion}` : '')
-                ).join('\n');
-                analysisCtx = [
-                  `Overall score: ${analysis.overallScore}/100`,
-                  `Language: ${analysis.language ?? 'unknown'}`,
-                  `Technical debt: ${analysis.technicalDebt ?? 'unknown'}`,
-                  issues.length > 0
-                    ? `\nKnown issues (${issues.length} total):\n${issueLines}`
-                    : 'No issues found.',
-                ].join('\n');
-              }
-
-              const systemPrompt = [
-                'You are an expert code assistant. The user is asking about the code shown below.',
-                'The code is provided WITH line numbers on the left (format: "   1: <code>").',
-                'IMPORTANT RULES:',
-                '- When you mention a line, use the exact number shown on the left of that line.',
-                '- Before citing a line number, look at the numbered code and confirm the line exists.',
-                '- Never guess or fabricate line numbers — count from the numbered listing.',
-                '- Quote the actual code from that line when referencing it.',
-                '- Be specific and accurate. If you are unsure of a line number, say so.',
-                '',
-                `CODE:\n\`\`\`\n${numberedCode}\n\`\`\``,
-                '',
-                `ANALYSIS RESULTS:\n${analysisCtx}`,
-              ].join('\n');
-
-              const raw = await callOpenAI(apiKey, AI_BASE_URL, AI_MODEL, [
-                { role: 'system', content: systemPrompt },
-                ...history,
-                { role: 'user', content: userMessage },
-              ], 1500);
-
-              sendJSON(res, 200, { success: true, reply: raw.trim() });
-              return;
-            }
-
-            // ----------------------------------------------------------------
-            // /api/repoTree — fetch full file/folder tree from a GitHub repo
-            // ----------------------------------------------------------------
+            // GitHub tree browser does NOT need AI key
             if (isRepoTree) {
-              const owner = body.owner as string | undefined;
-              const repo = body.repo as string | undefined;
-              if (!owner || !repo) { sendJSON(res, 400, { error: 'Missing owner or repo' }); return; }
-
-              const ghHeaders = { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' };
-
-              // 1. Fetch repo info
-              const repoResp = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: ghHeaders });
-              if (!repoResp.ok) {
-                const msg = repoResp.status === 404
-                  ? 'Repository not found. Make sure it exists and is public.'
-                  : `GitHub API error: ${repoResp.status}`;
-                sendJSON(res, repoResp.status, { error: msg }); return;
-              }
-              const repoData = await repoResp.json() as Record<string, unknown>;
-              if (repoData.private) { sendJSON(res, 403, { error: 'Cannot browse private repositories.' }); return; }
-
-              const defaultBranch = String(repoData.default_branch ?? 'main');
-              const repoInfo = {
-                fullName: String(repoData.full_name ?? `${owner}/${repo}`),
-                description: String(repoData.description ?? ''),
-                stars: Number(repoData.stargazers_count ?? 0),
-                forks: Number(repoData.forks_count ?? 0),
-                language: String(repoData.language ?? ''),
-                defaultBranch,
-              };
-
-              // 2. Fetch full recursive git tree
-              const treeResp = await fetch(
-                `https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`,
-                { headers: ghHeaders }
-              );
-              if (!treeResp.ok) { sendJSON(res, 500, { error: 'Failed to fetch file tree from GitHub.' }); return; }
-              const treeData = await treeResp.json() as { tree?: Array<{ path: string; type: string; size?: number }> };
-
-              // 3. Build nested structure
-              interface BuildNode { name: string; path: string; type: 'file' | 'dir'; size?: number; download_url?: string; children?: BuildNode[] }
-              const root: BuildNode[] = [];
-              const dirMap: Record<string, BuildNode> = {};
-
-              const getOrCreateDir = (dirPath: string): BuildNode => {
-                if (dirMap[dirPath]) return dirMap[dirPath];
-                const parts = dirPath.split('/');
-                const name = parts[parts.length - 1];
-                const parentPath = parts.slice(0, -1).join('/');
-                const node: BuildNode = { name, path: dirPath, type: 'dir', children: [] };
-                dirMap[dirPath] = node;
-                if (parentPath) {
-                  const parent = getOrCreateDir(parentPath);
-                  parent.children!.push(node);
-                } else {
-                  root.push(node);
-                }
-                return node;
-              };
-
-              const items = (treeData.tree ?? [])
-                .filter(item => !item.path.includes('node_modules') && !item.path.startsWith('.git'))
-                .slice(0, 2000); // safety cap
-
-              for (const item of items) {
-                const parts = item.path.split('/');
-                const name = parts[parts.length - 1];
-                const parentPath = parts.slice(0, -1).join('/');
-
-                if (item.type === 'tree') {
-                  getOrCreateDir(item.path);
-                } else if (item.type === 'blob') {
-                  const fileNode: BuildNode = {
-                    name,
-                    path: item.path,
-                    type: 'file',
-                    size: item.size,
-                    download_url: `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${item.path}`,
-                  };
-                  if (parentPath) {
-                    const parent = getOrCreateDir(parentPath);
-                    parent.children!.push(fileNode);
-                  } else {
-                    root.push(fileNode);
+              try {
+                const body = await readBody(req);
+                const { owner, repo } = body as any;
+                const h = { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' };
+                const rResp = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: h });
+                if (!rResp.ok) { sendJSON(res, rResp.status, { error: 'Repo not found' }); return; }
+                const rData = await rResp.json() as any;
+                const tResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${rData.default_branch}?recursive=1`, { headers: h });
+                const tData = await tResp.json() as any;
+                const root: any[] = [];
+                const dirMap: any = {};
+                const getDir = (p: string) => {
+                  if (dirMap[p]) return dirMap[p];
+                  const pts = p.split('/');
+                  const n = pts.pop();
+                  const pp = pts.join('/');
+                  const node = { name: n, path: p, type: 'dir', children: [] };
+                  dirMap[p] = node;
+                  if (pp) getDir(pp).children.push(node);
+                  else root.push(node);
+                  return node;
+                };
+                for (const i of tData.tree || []) {
+                  if (i.path.includes('node_modules') || i.path.startsWith('.')) continue;
+                  const pts = i.path.split('/');
+                  const n = pts.pop();
+                  const pp = pts.join('/');
+                  if (i.type === 'tree') getDir(i.path);
+                  else {
+                    const f = { name: n, path: i.path, type: 'file', size: i.size, download_url: `https://raw.githubusercontent.com/${owner}/${repo}/${rData.default_branch}/${i.path}` };
+                    if (pp) getDir(pp).children.push(f);
+                    else root.push(f);
                   }
                 }
-              }
-
-              // Sort: dirs first, then files, alphabetically
-              const sortNodes = (nodes: BuildNode[]) => {
-                nodes.sort((a, b) => {
-                  if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-                  return a.name.localeCompare(b.name);
-                });
-                nodes.forEach(n => { if (n.children) sortNodes(n.children); });
-              };
-              sortNodes(root);
-
-              sendJSON(res, 200, { success: true, tree: root, repoInfo });
+                sendJSON(res, 200, { tree: root, repoInfo: { fullName: rData.full_name, stars: rData.stargazers_count, forks: rData.forks_count, language: rData.language, description: rData.description } });
+              } catch (e: any) { sendJSON(res, 500, { error: e.message }); }
               return;
             }
 
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error('[openai-proxy]', msg);
-            sendJSON(res, 500, { error: msg });
-          }
-        });
-      },
-    },
-  ],
-    optimizeDeps: {
-      exclude: ['lucide-react'],
-    },
-    server: {
-      port: 3001,
-    },
+            if (!AI_KEY) { sendJSON(res, 500, { error: 'AI key missing in .env.local' }); return; }
+
+            // Helper to call AI with optional OpenAI fallback for Rate Limits (429)
+            const callAIWithFallback = async (messages: any[], maxTokens: number, jsonMode = false) => {
+              try {
+                // Try primary first
+                return await callOpenAI(AI_KEY, AI_BASE_URL, AI_MODEL, messages, maxTokens, jsonMode);
+              } catch (err: any) {
+                // If primary is Groq and it failed with 429, optionally try OpenAI.
+                if (GROQ_KEY && OPENAI_KEY && ENABLE_OPENAI_FALLBACK && err.message.includes('429')) {
+                  console.warn('Groq Rate Limit hit. Falling back to OpenAI because ENABLE_OPENAI_FALLBACK=true...');
+                  return await callOpenAI(OPENAI_KEY, 'https://api.openai.com/v1/chat/completions', 'gpt-4o-mini', messages, maxTokens, jsonMode);
+                }
+                if (GROQ_KEY && err.message.includes('429')) {
+                  throw new Error('Groq quota/rate limit reached. Wait for reset or upgrade your Groq billing tier. You can also lower prompt size and retry.');
+                }
+                throw err;
+              }
+            };
+
+            try {
+              const body = await readBody(req);
+              if (isAnalyze) {
+                const code = body.code as string;
+                const prompt = `Review this code and return JSON: { "overallScore": 0-100, "language": "...", "issues": [{ "severity": "...", "category": "...", "message": "...", "line": 0, "code": "...", "suggestion": "...", "fixedCode": "..." }], "metrics": { "complexity": 0, "maintainability": 0, "readability": 0, "performance": 0, "security": 0, "documentation": 0 }, "recommendations": [], "technicalDebt": "...", "codeSmells": 0 }\n\nCode:\n${code}`;
+                const raw = await callAIWithFallback([{ role: 'user', content: prompt }], 1200, true);
+                const d = parseJSON(raw) as any;
+                const analysis = {
+                  language: d.language || 'unknown',
+                  overallScore: d.overallScore || 70,
+                  issues: (d.issues || []).map((i: any, idx: number) => ({ id: `i${idx}`, ...i, confidence: 90 })),
+                  metrics: { ...d.metrics, linesOfCode: code.split('\n').length },
+                  summary: { totalIssues: (d.issues || []).length },
+                  recommendations: d.recommendations || [],
+                  codeSmells: d.codeSmells || 0,
+                  technicalDebt: d.technicalDebt || 'Low',
+                  timestamp: new Date().toISOString()
+                };
+                sendJSON(res, 200, { success: true, analysis });
+              } else if (isFix) {
+                const { code, issues, language } = body as any;
+                const prompt = `Fix these issues in the ${language} code:\n${JSON.stringify(issues)}\n\nReturn ONLY the fixed code:\n${code}`;
+                const fixed = await callAIWithFallback([{ role: 'user', content: prompt }], 2200);
+                sendJSON(res, 200, { success: true, fixedCode: fixed.replace(/^```[a-z]*\n/i, '').replace(/\n```$/g, '').trim() });
+              } else if (isExplain) {
+                const code = body.code as string;
+                const prompt = `Explain this code in JSON: { "language": "...", "purpose": "...", "overview": "...", "complexity": "Moderate", "sections": [{ "title": "...", "lines": "...", "explanation": "..." }], "inputs": [], "outputs": "...", "dependencies": [], "audience": "...", "keyPoints": [] }\n\nCode:\n${code}`;
+                const raw = await callAIWithFallback([{ role: 'user', content: prompt }], 1100, true);
+                sendJSON(res, 200, { success: true, explanation: parseJSON(raw) });
+              } else if (isChat) {
+                const { code, history, userMessage, analysis } = body as any;
+                
+                // Add line numbers to the code so the AI can answer "what does line X do?" accurately
+                const lines = (code || '').split('\n').map((l: string, i: number) => `${i + 1}: ${l}`).join('\n');
+                
+                const sys = `You are a Senior AI Code Assistant. You have access to the code and its recent analysis.
+Current Code (with line numbers):
+${lines}
+
+Current Analysis Summary:
+${JSON.stringify(analysis)}
+
+Instructions:
+1. Be concise and technical.
+2. If the user asks about a specific line, refer to the numbered code above.
+3. Help the user understand the code logic, fix bugs, or improve performance.
+4. If a line was fixed by "Auto-Fix", explain WHY it was changed based on the analysis.`;
+
+                const reply = await callAIWithFallback([{ role: 'system', content: sys }, ...history, { role: 'user', content: userMessage }], 900);
+                sendJSON(res, 200, { success: true, reply });
+              }
+            } catch (err: any) { sendJSON(res, 500, { error: err.message }); }
+          });
+        }
+      }
+    ],
+    server: { port: 3001 }
   };
 });

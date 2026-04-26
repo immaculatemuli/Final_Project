@@ -1,307 +1,178 @@
-import React, { useRef, useEffect } from 'react';
-import { ArrowLeftRight, Minus, Plus, Equal } from 'lucide-react';
+import React, { useRef, useEffect, useMemo } from 'react';
+import { ArrowLeftRight, Minus, Plus, X } from 'lucide-react';
 
 interface DiffViewerProps {
   original: string;
   modified: string;
+  onClose: () => void;
 }
 
 type DiffOp = 'equal' | 'remove' | 'add';
 
 interface DiffLine {
   op: DiffOp;
-  origLine: string | null;  // shown on left
-  newLine: string | null;   // shown on right
+  origLine: string | null;
+  newLine: string | null;
   origNum: number | null;
   newNum: number | null;
 }
 
-// ─── LCS-based diff ──────────────────────────────────────────────────────────
 function computeDiff(origLines: string[], newLines: string[]): DiffLine[] {
-  const O = origLines.length;
-  const N = newLines.length;
-
-  // Build LCS table
-  const dp: number[][] = Array.from({ length: O + 1 }, () => new Array(N + 1).fill(0));
-  for (let i = O - 1; i >= 0; i--) {
-    for (let j = N - 1; j >= 0; j--) {
-      if (origLines[i] === newLines[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-  }
-
-  // Trace back through LCS table to produce aligned diff rows
   const result: DiffLine[] = [];
   let i = 0, j = 0;
-  let origNum = 1, newNum = 1;
-
-  while (i < O || j < N) {
-    if (i < O && j < N && origLines[i] === newLines[j]) {
-      // Equal
-      result.push({ op: 'equal', origLine: origLines[i], newLine: newLines[j], origNum, newNum });
-      i++; j++; origNum++; newNum++;
-    } else if (j < N && (i >= O || dp[i][j + 1] >= dp[i + 1][j])) {
-      // Added in new
-      result.push({ op: 'add', origLine: null, newLine: newLines[j], origNum: null, newNum });
-      j++; newNum++;
-    } else {
-      // Removed from original
-      result.push({ op: 'remove', origLine: origLines[i], newLine: null, origNum, newNum: null });
-      i++; origNum++;
+  while (i < origLines.length || j < newLines.length) {
+    if (i < origLines.length && j < newLines.length && origLines[i] === newLines[j]) {
+      result.push({ op: 'equal', origLine: origLines[i], newLine: newLines[j], origNum: i + 1, newNum: j + 1 });
+      i++; j++;
+    } else if (i < origLines.length && (!newLines[j] || origLines[i] !== newLines[j])) {
+      let found = -1;
+      for (let k = j; k < Math.min(j + 20, newLines.length); k++) {
+        if (newLines[k] === origLines[i]) { found = k; break; }
+      }
+      if (found !== -1) {
+        while (j < found) {
+          result.push({ op: 'add', origLine: null, newLine: newLines[j], origNum: null, newNum: j + 1 });
+          j++;
+        }
+      } else {
+        result.push({ op: 'remove', origLine: origLines[i], newLine: null, origNum: i + 1, newNum: null });
+        i++;
+      }
+    } else if (j < newLines.length) {
+      result.push({ op: 'add', origLine: null, newLine: newLines[j], origNum: null, newNum: j + 1 });
+      j++;
     }
   }
-
   return result;
 }
 
-// ─── Character-level diff for a changed line pair ────────────────────────────
-function charDiff(a: string, b: string): { aParts: { text: string; changed: boolean }[]; bParts: { text: string; changed: boolean }[] } {
-  // Word-level tokenisation — good enough for code
+function charDiff(a: string, b: string) {
   const tokenize = (s: string) => s.match(/\w+|\W/g) ?? [];
   const at = tokenize(a);
   const bt = tokenize(b);
-
-  const M = at.length, K = bt.length;
-  const dp2: number[][] = Array.from({ length: M + 1 }, () => new Array(K + 1).fill(0));
-  for (let i = M - 1; i >= 0; i--)
-    for (let j = K - 1; j >= 0; j--)
-      dp2[i][j] = at[i] === bt[j] ? dp2[i + 1][j + 1] + 1 : Math.max(dp2[i + 1][j], dp2[i][j + 1]);
-
   const aParts: { text: string; changed: boolean }[] = [];
   const bParts: { text: string; changed: boolean }[] = [];
   let i = 0, j = 0;
-  while (i < M || j < K) {
-    if (i < M && j < K && at[i] === bt[j]) {
+  while (i < at.length || j < bt.length) {
+    if (i < at.length && j < bt.length && at[i] === bt[j]) {
       aParts.push({ text: at[i], changed: false });
       bParts.push({ text: bt[j], changed: false });
       i++; j++;
-    } else if (j < K && (i >= M || dp2[i][j + 1] >= dp2[i + 1][j])) {
-      bParts.push({ text: bt[j], changed: true });
-      j++;
-    } else {
+    } else if (i < at.length) {
       aParts.push({ text: at[i], changed: true });
       i++;
+    } else if (j < bt.length) {
+      bParts.push({ text: bt[j], changed: true });
+      j++;
     }
   }
-
   return { aParts, bParts };
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
-export const DiffViewer: React.FC<DiffViewerProps> = ({ original, modified }) => {
+export const DiffViewer: React.FC<DiffViewerProps> = ({ original, modified, onClose }) => {
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
 
-  // Sync scroll between both panes
   const syncScroll = (src: HTMLDivElement, dst: HTMLDivElement) => {
     dst.scrollTop = src.scrollTop;
     dst.scrollLeft = src.scrollLeft;
   };
 
-  const origLines = original.split('\n');
-  const newLines = modified.split('\n');
-  const diff = computeDiff(origLines, newLines);
-
-  const removed = diff.filter(l => l.op === 'remove').length;
-  const added = diff.filter(l => l.op === 'add').length;
-  const changed = Math.min(removed, added);
-
-  // Find first changed line index and auto-scroll to it
-  useEffect(() => {
-    const firstChangedIdx = diff.findIndex(l => l.op !== 'equal');
-    if (firstChangedIdx > 0 && leftRef.current) {
-      const LINE_H = 24;
-      const offset = Math.max(0, firstChangedIdx - 3) * LINE_H;
-      leftRef.current.scrollTop = offset;
-      if (rightRef.current) rightRef.current.scrollTop = offset;
+  const { diff, removed, added, isTooLarge } = useMemo(() => {
+    const oLines = (original || '').replace(/\r/g, '').split('\n');
+    const nLines = (modified || '').replace(/\r/g, '').split('\n');
+    const tooLarge = oLines.length > 5000;
+    const rawDiff = tooLarge ? [] : computeDiff(oLines, nLines);
+    
+    const d: DiffLine[] = [];
+    let k = 0;
+    while (k < rawDiff.length) {
+      if (rawDiff[k].op === 'equal') {
+        d.push(rawDiff[k]);
+        k++;
+      } else {
+        const rems: DiffLine[] = [];
+        const adds: DiffLine[] = [];
+        while (k < rawDiff.length && rawDiff[k].op !== 'equal') {
+          if (rawDiff[k].op === 'remove') rems.push(rawDiff[k]);
+          else adds.push(rawDiff[k]);
+          k++;
+        }
+        const max = Math.max(rems.length, adds.length);
+        for (let m = 0; m < max; m++) {
+          const r = rems[m], a = adds[m];
+          if (r && a) d.push({ op: 'change' as any, origLine: r.origLine, newLine: a.newLine, origNum: r.origNum, newNum: a.newNum });
+          else if (r) d.push(r);
+          else if (a) d.push(a);
+        }
+      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return { 
+      diff: d, 
+      removed: rawDiff.filter(l => l.op === 'remove').length, 
+      added: rawDiff.filter(l => l.op === 'add').length,
+      isTooLarge: tooLarge
+    };
   }, [original, modified]);
 
-  return (
-    <div className="rounded-2xl overflow-hidden shadow-2xl" style={{ border: '1px solid rgba(255,255,255,0.09)' }}>
+  useEffect(() => {
+    const idx = diff.findIndex(l => l.op !== 'equal');
+    if (idx > 0 && leftRef.current && rightRef.current) {
+      const offset = Math.max(0, idx - 3) * 24;
+      leftRef.current.scrollTop = offset;
+      rightRef.current.scrollTop = offset;
+    }
+  }, [diff]);
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3"
-        style={{ background: 'rgba(0,0,0,0.4)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+  return (
+    <div className="rounded-2xl overflow-hidden shadow-2xl bg-slate-900 border border-white/10">
+      <div className="flex items-center justify-between px-5 py-3 bg-black/40 border-b border-white/5">
         <div className="flex items-center gap-2">
           <ArrowLeftRight className="w-4 h-4 text-cyan-400" />
-          <span className="text-sm font-bold text-white">Auto-Fix Diff</span>
+          <span className="text-sm font-bold text-white">Auto-Fix Comparison</span>
         </div>
-        <div className="flex items-center gap-4 text-xs font-semibold">
-          {removed > 0 && (
-            <span className="flex items-center gap-1 text-red-400">
-              <Minus className="w-3 h-3" />{removed} removed
-            </span>
-          )}
-          {added > 0 && (
-            <span className="flex items-center gap-1 text-emerald-400">
-              <Plus className="w-3 h-3" />{added} added
-            </span>
-          )}
-          {changed > 0 && (
-            <span className="flex items-center gap-1 text-amber-400">
-              <Equal className="w-3 h-3" />{changed} changed
-            </span>
-          )}
-          {removed === 0 && added === 0 && (
-            <span className="text-slate-500">No changes detected</span>
-          )}
+        <div className="flex items-center gap-4 text-[10px] font-bold uppercase tracking-widest">
+          {removed > 0 && <span className="text-red-400">-{removed} lines</span>}
+          {added > 0 && <span className="text-emerald-400">+{added} lines</span>}
         </div>
-        <div className="flex items-center gap-4 text-[10px] uppercase tracking-wider font-bold">
-          <span className="flex items-center gap-1 text-red-400"><Minus className="w-3 h-3" />Original</span>
-          <span className="flex items-center gap-1 text-emerald-400"><Plus className="w-3 h-3" />Fixed</span>
-        </div>
+        <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all">
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
-      {/* Split pane */}
-      <div className="grid grid-cols-2 divide-x" style={{ height: '520px', divideColor: 'rgba(255,255,255,0.06)' }}>
+      {isTooLarge && <div className="p-10 text-center text-slate-500">File too large for live diff preview.</div>}
 
-        {/* ── LEFT: Original ─────────────────────────── */}
-        <div
-          ref={leftRef}
-          className="overflow-auto font-mono text-xs leading-6"
-          style={{ background: 'rgba(239,68,68,0.03)' }}
-          onScroll={e => rightRef.current && syncScroll(e.currentTarget, rightRef.current)}
-        >
-          <div style={{ minWidth: 'max-content' }}>
-            {diff.map((row, idx) => {
-              if (row.op === 'add') {
-                // Empty spacer to keep left aligned with right's added line
-                return (
-                  <div key={idx} className="flex min-h-[24px]" style={{ background: 'rgba(0,0,0,0.15)' }}>
-                    <span className="w-10 shrink-0 select-none" />
-                    <span className="w-5 shrink-0 select-none" />
-                    <span className="px-3 text-slate-700 italic text-[10px] leading-6">·</span>
-                  </div>
-                );
-              }
-              const isRemoved = row.op === 'remove';
-
-              // Find the corresponding new line for char-level diff
-              const pairIdx = isRemoved
-                ? diff.findIndex((r, ri) => ri > idx && r.op === 'add' && r.newLine !== null)
-                : -1;
-              const pairLine = pairIdx >= 0 ? diff[pairIdx].newLine ?? '' : null;
-
-              let parts: { text: string; changed: boolean }[] | null = null;
-              if (isRemoved && pairLine !== null) {
-                parts = charDiff(row.origLine ?? '', pairLine).aParts;
-              }
-
-              return (
-                <div
-                  key={idx}
-                  className="flex min-h-[24px]"
-                  style={{
-                    background: isRemoved ? 'rgba(239,68,68,0.18)' : 'transparent',
-                    borderLeft: isRemoved ? '3px solid rgba(239,68,68,0.7)' : '3px solid transparent',
-                  }}
-                >
-                  <span className="w-10 shrink-0 text-right pr-3 select-none text-slate-600 leading-6">
-                    {row.origNum}
-                  </span>
-                  <span className="w-5 shrink-0 text-center select-none leading-6 font-bold"
-                    style={{ color: 'rgba(239,68,68,0.8)' }}>
-                    {isRemoved ? '−' : ' '}
-                  </span>
-                  <span className="px-2 whitespace-pre leading-6"
-                    style={{ color: isRemoved ? '#fca5a5' : '#475569' }}>
-                    {parts
-                      ? parts.map((p, pi) => (
-                        <span key={pi} style={p.changed ? { background: 'rgba(239,68,68,0.45)', borderRadius: 3, padding: '0 1px' } : {}}>
-                          {p.text}
-                        </span>
-                      ))
-                      : (row.origLine ?? '')}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+      <div className="grid grid-cols-2 divide-x divide-white/5 h-[500px]">
+        <div ref={leftRef} className="overflow-auto font-mono text-[11px] leading-6 bg-red-500/5" onScroll={e => rightRef.current && syncScroll(e.currentTarget, rightRef.current)}>
+          {diff.map((row, idx) => {
+            if (row.op === 'add') return <div key={idx} className="h-6 bg-black/20" />;
+            const isChg = row.op === 'remove' || (row.op as string) === 'change';
+            const parts = isChg && row.origLine && row.newLine ? charDiff(row.origLine, row.newLine).aParts : null;
+            return (
+              <div key={idx} className={`flex h-6 ${isChg ? 'bg-red-500/20 border-l-2 border-red-500' : ''}`}>
+                <span className="w-10 shrink-0 text-right pr-2 opacity-30 select-none">{row.origNum}</span>
+                <span className="px-2 whitespace-pre truncate">
+                  {parts ? parts.map((p, pi) => <span key={pi} className={p.changed ? 'bg-red-500/40 rounded' : ''}>{p.text}</span>) : (row.origLine || ' ')}
+                </span>
+              </div>
+            );
+          })}
         </div>
-
-        {/* ── RIGHT: Fixed ───────────────────────────── */}
-        <div
-          ref={rightRef}
-          className="overflow-auto font-mono text-xs leading-6"
-          style={{ background: 'rgba(16,185,129,0.03)' }}
-          onScroll={e => leftRef.current && syncScroll(e.currentTarget, leftRef.current)}
-        >
-          <div style={{ minWidth: 'max-content' }}>
-            {diff.map((row, idx) => {
-              if (row.op === 'remove') {
-                return (
-                  <div key={idx} className="flex min-h-[24px]" style={{ background: 'rgba(0,0,0,0.15)' }}>
-                    <span className="w-10 shrink-0 select-none" />
-                    <span className="w-5 shrink-0 select-none" />
-                    <span className="px-3 text-slate-700 italic text-[10px] leading-6">·</span>
-                  </div>
-                );
-              }
-              const isAdded = row.op === 'add';
-
-              const pairIdx = isAdded
-                ? diff.findLastIndex((r, ri) => ri < idx && r.op === 'remove' && r.origLine !== null)
-                : -1;
-              const pairLine = pairIdx >= 0 ? diff[pairIdx].origLine ?? '' : null;
-
-              let parts: { text: string; changed: boolean }[] | null = null;
-              if (isAdded && pairLine !== null) {
-                parts = charDiff(pairLine, row.newLine ?? '').bParts;
-              }
-
-              return (
-                <div
-                  key={idx}
-                  className="flex min-h-[24px]"
-                  style={{
-                    background: isAdded ? 'rgba(16,185,129,0.18)' : 'transparent',
-                    borderLeft: isAdded ? '3px solid rgba(16,185,129,0.7)' : '3px solid transparent',
-                  }}
-                >
-                  <span className="w-10 shrink-0 text-right pr-3 select-none text-slate-600 leading-6">
-                    {row.newNum}
-                  </span>
-                  <span className="w-5 shrink-0 text-center select-none leading-6 font-bold"
-                    style={{ color: 'rgba(16,185,129,0.9)' }}>
-                    {isAdded ? '+' : ' '}
-                  </span>
-                  <span className="px-2 whitespace-pre leading-6"
-                    style={{ color: isAdded ? '#6ee7b7' : '#64748b' }}>
-                    {parts
-                      ? parts.map((p, pi) => (
-                        <span key={pi} style={p.changed ? { background: 'rgba(16,185,129,0.4)', borderRadius: 3, padding: '0 1px' } : {}}>
-                          {p.text}
-                        </span>
-                      ))
-                      : (row.newLine ?? '')}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+        <div ref={rightRef} className="overflow-auto font-mono text-[11px] leading-6 bg-emerald-500/5" onScroll={e => leftRef.current && syncScroll(e.currentTarget, leftRef.current)}>
+          {diff.map((row, idx) => {
+            if (row.op === 'remove') return <div key={idx} className="h-6 bg-black/20" />;
+            const isChg = row.op === 'add' || (row.op as string) === 'change';
+            const parts = isChg && row.origLine && row.newLine ? charDiff(row.origLine, row.newLine).bParts : null;
+            return (
+              <div key={idx} className={`flex h-6 ${isChg ? 'bg-emerald-500/20 border-l-2 border-emerald-500' : ''}`}>
+                <span className="w-10 shrink-0 text-right pr-2 opacity-30 select-none">{row.newNum}</span>
+                <span className="px-2 whitespace-pre truncate">
+                  {parts ? parts.map((p, pi) => <span key={pi} className={p.changed ? 'bg-emerald-500/40 rounded' : ''}>{p.text}</span>) : (row.newLine || ' ')}
+                </span>
+              </div>
+            );
+          })}
         </div>
-      </div>
-
-      {/* Footer legend */}
-      <div className="flex items-center justify-center gap-6 px-5 py-2 text-[10px] text-slate-600"
-        style={{ background: 'rgba(0,0,0,0.3)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm inline-block" style={{ background: 'rgba(239,68,68,0.4)' }} />
-          Removed / changed word
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm inline-block" style={{ background: 'rgba(16,185,129,0.4)' }} />
-          Added / fixed word
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-sm inline-block" style={{ background: 'rgba(255,255,255,0.06)' }} />
-          Unchanged
-        </span>
       </div>
     </div>
   );

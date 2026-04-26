@@ -40,6 +40,10 @@ interface RepoExplorerProps {
   /** Called when the user clicks "Analyze" on a selected file */
   onAnalyze: (code: string, fileName: string) => void;
   isAnalyzing: boolean;
+  repoUrl: string;
+  setRepoUrl: (url: string) => void;
+  filter: string;
+  setFilter: (f: string) => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -165,8 +169,9 @@ const TreeRow: React.FC<TreeRowProps> = ({ node, depth, selectedPath, onSelect, 
 
 // ─── RepoExplorer ─────────────────────────────────────────────────────────────
 
-const RepoExplorer: React.FC<RepoExplorerProps> = ({ onAnalyze, isAnalyzing }) => {
-  const [repoUrl, setRepoUrl] = useState('');
+ const RepoExplorer: React.FC<RepoExplorerProps> = ({ 
+  onAnalyze, isAnalyzing, repoUrl, setRepoUrl, filter, setFilter 
+}) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
@@ -174,7 +179,15 @@ const RepoExplorer: React.FC<RepoExplorerProps> = ({ onAnalyze, isAnalyzing }) =
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [loadingFile, setLoadingFile] = useState(false);
-  const [filter, setFilter] = useState('');
+
+  // Auto-fetch tree when repoUrl is synced (and not already loaded)
+  React.useEffect(() => {
+    const parsed = parseRepoUrl(repoUrl.trim());
+    if (parsed && !repoInfo && !loading) {
+      fetchTree();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoUrl]);
 
   const parseRepoUrl = (url: string) => {
     const m = url.match(/github\.com\/([^/\s]+)\/([^/\s]+)/);

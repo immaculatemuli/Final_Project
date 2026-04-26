@@ -281,11 +281,8 @@ export async function sendAnalysisEmail(
 ): Promise<void> {
   const subject = `${data.language} Code Analysis — Score: ${data.score}/100`;
 
-  // Always use the backend endpoint for both local dev and production.
-  // We use '/api/sendAnalysisReport' for Vercel.
-  const endpoint = import.meta.env.DEV ? '/mailer' : '/api/sendAnalysisReport';
-
-  const res = await fetch(endpoint, {
+  // Send via the dev SMTP proxy (/mailer) which uses Gmail under the hood
+  const res = await fetch('/mailer', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -301,3 +298,6 @@ export async function sendAnalysisEmail(
     throw new Error(err.error ?? `Server error ${res.status}`);
   }
 }
+
+
+

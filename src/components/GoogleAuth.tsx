@@ -23,13 +23,23 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
   const [showPass, setShowPass] = useState(false);
 
   const handleGoogleSignIn = async () => {
-    setLoading(true); setError('');
+    setError('');
+    // Trigger popup IMMEDIATELY before any async state updates to prevent browser blocking
     try {
       const result = await signInWithPopup(auth, googleProvider);
+      setLoading(true);
       onAuthSuccess(result.user);
     } catch (e: any) {
-      setError(e.message || 'Failed to sign in with Google');
-    } finally { setLoading(false); }
+      if (e.code === 'auth/popup-blocked') {
+        setError('The Google login window was blocked. Please click the "Pop-up blocked" icon in your browser address bar and allow it.');
+      } else if (e.code === 'auth/cancelled-popup-request') {
+        // User closed the popup, ignore or show minimal error
+      } else {
+        setError(e.message || 'Failed to sign in with Google');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {

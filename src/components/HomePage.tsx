@@ -4,7 +4,7 @@ import { auth, db } from '../firebase';
 import { collection, addDoc, Timestamp, serverTimestamp, query, where, orderBy, onSnapshot, doc, setDoc, updateDoc, arrayUnion, limit } from 'firebase/firestore';
 import { CodeInput } from './CodeInput';
 import ReviewPanel from './ReviewPanel';
-import { Cpu, History, Bookmark, Copy, ArrowLeftRight, LogOut, User as UserIcon, MessageSquare, X, Send } from 'lucide-react';
+import { Cpu, History, Bookmark, Copy, ArrowLeftRight, LogOut, MessageSquare, X, Send } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import ChatPanel from './ChatPanel';
 import { analyzeCodeWithAI, fixCodeWithAI, chatWithAI } from '../services/aiAnalysis';
@@ -13,6 +13,7 @@ import type { ChatMessage } from '../services/aiAnalysis';
 interface HomePageProps { user: User; }
 
 interface Issue {
+  id?: string;
   type: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
   category: string;
@@ -67,22 +68,40 @@ interface AppAnalysis {
 
 interface HomePageProps {
   user: User;
-  onNavigate?: (view: 'home' | 'history') => void;
+  onNavigate?: (view: 'home' | 'history' | 'snippets') => void;
   restoredAnalysis?: AppAnalysis | null;
   clearRestoredAnalysis?: () => void;
 }
 
-// ... existing interfaces ...
+function sanitize<T>(obj: T): T | null {
+  if (!obj) return null;
+  try {
+    return JSON.parse(JSON.stringify(obj));
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Fetch error:', err);
+    throw new Error(`Connection to analysis server failed (${msg}). If you are running locally, ensure 'npm run dev' is active and you have an internet connection.`);
+  }
+}
+
+function toUserFriendlyAIError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/quota|rate limit|429|insufficient_quota/i.test(message)) {
+    return 'AI quota/rate limit reached. Wait for reset or upgrade your provider billing, then try again.';
+  }
+  return message;
+}
 
 export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAnalysis, clearRestoredAnalysis }) => {
   const [code, setCode] = useState('');
   const [analysis, setAnalysis] = useState<AppAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
+  const [, setAnalysisHistory] = useState<AppAnalysis[]>([]);
   const [wasAutoFixed, setWasAutoFixed] = useState(false);
   const [preFixScore, setPreFixScore] = useState<number | null>(null);
   const [autoFixMessage, setAutoFixMessage] = useState<string | null>(null);
-  const [analysisHistory, setAnalysisHistory] = useState<AppAnalysis[]>([]);
+  // Analysis history is managed but not rendered in this component directly (used for history view in parent)
   const [collabSessionId, setCollabSessionId] = useState<string | null>(null);
   const [joinSessionInput, setJoinSessionInput] = useState('');
   const [targetLine, setTargetLine] = useState<number | null>(null);
@@ -93,13 +112,39 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState(false);
-  const [collabComments, setCollabComments] = useState<Array<{ uid: string; displayName: string; text: string; createdAt: string }>>([]);
   const [commentInput, setCommentInput] = useState('');
+  const [collabComments, setCollabComments] = useState<Array<{ uid: string; displayName: string; text: string; createdAt: string }>>([]);
   const [collabOwnerUid, setCollabOwnerUid] = useState<string | null>(null);
   const [sessionKicked, setSessionKicked] = useState(false);
-  const [collabConnected, setCollabConnected] = useState(false);
+  // Keep setter for existing session lifecycle calls.
+  const [, setCollabConnected] = useState(false);
+  const [participants, setParticipants] = useState<Array<{ uid: string; displayName: string; photoURL: string; role: 'host' | 'participant' }>>([]);
+  const [inputMethod, setInputMethod] = useState<'paste' | 'upload' | 'folder' | 'github'>('paste');
   const [linkCopied, setLinkCopied] = useState(false);
+  const [selectedSeverity, setSelectedSeverity] = useState('all');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [showMetrics, setShowMetrics] = useState(true);
+  const [expandedIssueIds, setExpandedIssueIds] = useState<number[]>([]);
+  const [githubUrl, setGithubUrl] = useState('');
+  const [githubFilter, setGithubFilter] = useState('');
+
+  // Refs for sync listener to avoid dependency loops
+  const codeRef = useRef(code);
+  const analysisRef = useRef(analysis);
+  const chatMessagesRef = useRef(chatMessages);
+  const viewModeRef = useRef(viewMode);
+  const originalCodeRef = useRef(originalCode);
+  const wasAutoFixedRef = useRef(wasAutoFixed);
+  
+  useEffect(() => { codeRef.current = code; }, [code]);
+  useEffect(() => { analysisRef.current = analysis; }, [analysis]);
+  useEffect(() => { chatMessagesRef.current = chatMessages; }, [chatMessages]);
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  useEffect(() => { originalCodeRef.current = originalCode; }, [originalCode]);
+  useEffect(() => { wasAutoFixedRef.current = wasAutoFixed; }, [wasAutoFixed]);
   const [avatarError, setAvatarError] = useState(false);
+
+
 
 
   // Auto-join session from URL param (e.g. ?session=abc123)
@@ -111,10 +156,10 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       setCollabSessionId(sessionId);
       updateDoc(doc(db, 'collabSessions', sessionId), {
         participants: arrayUnion(user.uid),
-      }).catch(() => {});
+      }).catch(() => { });
       window.history.replaceState({}, '', window.location.pathname);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Handle restored analysis from history
@@ -132,7 +177,6 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   }, [restoredAnalysis, clearRestoredAnalysis]);
 
   // Strip undefined values so Firestore doesn't reject the document
-  const sanitize = (obj: unknown): unknown => JSON.parse(JSON.stringify(obj));
 
   // Save an analysis to Firestore history — separate from AI call so errors don't hide each other
   const saveToHistory = async (analysis: AppAnalysis, codeSnippet: string): Promise<string | null> => {
@@ -162,7 +206,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       const newAnalysis: AppAnalysis = { ...result };
 
       setAnalysis(newAnalysis);
-      setAnalysisHistory(prev => [newAnalysis, ...prev.slice(0, 9)]);
+      // History state is kept for reference but not displayed in this view
       void saveToHistory(newAnalysis, codeContent);
 
       if (collabSessionId) {
@@ -172,14 +216,22 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error('AI analysis failed:', err);
-      alert(`Analysis failed: ${err.message}`);
+      const friendly = toUserFriendlyAIError(err);
+      setAutoFixMessage(`Analysis failed: ${friendly}`);
+      setTimeout(() => setAutoFixMessage(null), 7000);
       setAnalysis(null);
+      
+      // Sync the error state to participants so they aren't stuck loading
+      if (collabSessionId) {
+        const sessionRef = doc(db, 'collabSessions', collabSessionId);
+        void setDoc(sessionRef, { isAnalyzing: false, updatedAt: serverTimestamp() }, { merge: true });
+      }
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  // Load user analysis history from Firestore
+  // Initial setup: load history
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -195,14 +247,14 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         // Backend saves analysis under 'analysis' field, not 'result'
         if (data?.analysis) {
           const baseAnalysis = data.analysis as AppAnalysis;
-          const codeSnippet = (data as any).codeSnippet as string | undefined;
+          const codeSnippet = data.codeSnippet as string | undefined;
           items.push({
             ...baseAnalysis,
             codeSnippet,
           });
         }
       });
-      setAnalysisHistory(items);
+      // Items parsed but unused here (can be lifted to parent if needed)
     });
     return () => unsub();
   }, [user?.uid]);
@@ -266,8 +318,21 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       setCode(fixedCode);
       setIsFixing(false);
       setViewMode('diff');
+      setWasAutoFixed(true);
 
-      // 2. Re-analyze the fixed code so the score reflects the actual fixed state
+      if (collabSessionId) {
+        const sessionRef = doc(db, 'collabSessions', collabSessionId);
+        void setDoc(sessionRef, {
+          originalCode: code,
+          code: fixedCode,
+          viewMode: 'diff',
+          wasAutoFixed: true,
+          preFixScore: analysis.overallScore,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      }
+
+      // 2. We trigger re-analysis automatically so the side panel updates
       setAutoFixMessage('✨ Code fixed! Re-analyzing to verify improvements...');
       setIsAnalyzing(true);
       try {
@@ -275,26 +340,29 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         const reAnalysis: AppAnalysis = { ...reResult };
         setAnalysis(reAnalysis);
         setAnalysisHistory(prev => [reAnalysis, ...prev.slice(0, 9)]);
-        // Only mark as auto-fixed after the score is confirmed accurate
         setWasAutoFixed(true);
         setAutoFixMessage('✓ Code auto-fixed and re-analyzed successfully!');
         setTimeout(() => setAutoFixMessage(null), 5000);
       } catch (analyzeErr) {
         console.warn('Re-analysis after fix failed:', analyzeErr);
-        // Don't mark wasAutoFixed — score would not reflect fixed code
-        setAutoFixMessage('⚠ Code fixed but re-analysis failed. Click Analyze to update the score.');
+        setAutoFixMessage('⚠ Code fixed but re-analysis failed.');
         setTimeout(() => setAutoFixMessage(null), 7000);
       } finally {
         setIsAnalyzing(false);
       }
 
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown error';
-      alert(`Auto Fix failed: ${msg}`);
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error('Auto-fix failed:', err);
+      const friendly = toUserFriendlyAIError(err);
+      setAutoFixMessage(`Auto-fix failed: ${friendly}`);
+      setTimeout(() => setAutoFixMessage(null), 8000);
     } finally {
       setIsFixing(false);
     }
   };
+
+
 
   const handleSaveSnippet = async () => {
     if (!code || !analysis) return;
@@ -319,9 +387,19 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     const sessionRef = doc(db, 'collabSessions', id);
     await setDoc(sessionRef, {
       code,
-      analysis: analysis || null,
+      analysis: sanitize(analysis),
       ownerUid: user.uid,
       participants: [user.uid],
+      inputMethod,
+      isAnalyzing,
+      isFixing,
+      participantsInfo: {
+        [user.uid]: {
+          displayName: user.displayName || 'Anonymous',
+          photoURL: user.photoURL || '',
+          role: 'host'
+        }
+      },
       comments: [],
       status: 'active',
       analysisId: currentAnalysisId,
@@ -351,13 +429,27 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     if (!sessionId) return;
     setCollabConnected(false);
     setCollabSessionId(sessionId);
-    // Best-effort participant tracking — silently ignored if rules block it
-    updateDoc(doc(db, 'collabSessions', sessionId), {
+    
+    // Update participants info
+    const sessionRef = doc(db, 'collabSessions', sessionId);
+    updateDoc(sessionRef, {
       participants: arrayUnion(user.uid),
-    }).catch(() => {});
+      [`participantsInfo.${user.uid}`]: {
+        displayName: user.displayName || 'Anonymous',
+        photoURL: user.photoURL || '',
+        role: 'participant'
+      }
+    }).catch(() => { });
   };
 
-  const handleSaveReport = async (type: 'html' | 'email' | 'pdf', recipientEmail?: string, status: 'downloaded' | 'sent' | 'failed' = 'downloaded') => {
+  const handleLeaveSession = () => {
+    setCollabSessionId(null);
+    setCollabConnected(false);
+    setCollabComments([]);
+    setChatMessages([]);
+  };
+
+  const handleSaveReport = async (type: 'html' | 'email' | 'pdf' | 'csv', recipientEmail?: string, status: 'downloaded' | 'sent' | 'failed' = 'downloaded') => {
     try {
       await addDoc(collection(db, 'reports'), {
         uid: user.uid,
@@ -404,31 +496,69 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     setJoinSessionInput('');
   };
 
-  // Sync incoming collaborative session updates (code + analysis) to local state
+  // Sync incoming collaborative session updates to local state
   useEffect(() => {
     if (!collabSessionId) return;
     const sessionRef = doc(db, 'collabSessions', collabSessionId);
+    
     const unsub = onSnapshot(sessionRef, (snap) => {
       if (!snap.exists()) return;
-      const data = snap.data() as any;
+      const data = snap.data() as Record<string, unknown>;
 
-      setCollabConnected(true);
+      // Connection active
       isRemoteUpdate.current = true;
 
-      if (typeof data.code === 'string') {
+      // Use refs for comparison to avoid re-subscribing on every local change
+      if (typeof data.code === 'string' && data.code !== codeRef.current) {
         setCode(data.code);
       }
-      if (data.analysis) {
+      if (data.analysis && JSON.stringify(data.analysis) !== JSON.stringify(analysisRef.current)) {
         setAnalysis(data.analysis as AppAnalysis);
       }
-      if (typeof data.originalCode === 'string') {
+      if (typeof data.originalCode === 'string' && data.originalCode !== originalCodeRef.current) {
         setOriginalCode(data.originalCode);
       }
-      if (typeof data.viewMode === 'string') {
+      if (typeof data.viewMode === 'string' && data.viewMode !== viewModeRef.current) {
         setViewMode(data.viewMode as 'editor' | 'diff');
       }
-      if (typeof data.wasAutoFixed === 'boolean') {
+      if (typeof data.wasAutoFixed === 'boolean' && data.wasAutoFixed !== wasAutoFixedRef.current) {
         setWasAutoFixed(data.wasAutoFixed);
+      }
+      if (typeof data.inputMethod === 'string' && data.inputMethod !== inputMethod) {
+        setInputMethod(data.inputMethod as 'paste' | 'upload' | 'folder' | 'github');
+      }
+      if (typeof data.isAnalyzing === 'boolean' && data.isAnalyzing !== isAnalyzing) {
+        setIsAnalyzing(data.isAnalyzing);
+      }
+      if (typeof data.isFixing === 'boolean' && data.isFixing !== isFixing) {
+        setIsFixing(data.isFixing);
+      }
+      if (typeof data.selectedSeverity === 'string' && data.selectedSeverity !== selectedSeverity) {
+        setSelectedSeverity(data.selectedSeverity);
+      }
+      if (typeof data.selectedCategory === 'string' && data.selectedCategory !== selectedCategory) {
+        setSelectedCategory(data.selectedCategory);
+      }
+      if (typeof data.showMetrics === 'boolean' && data.showMetrics !== showMetrics) {
+        setShowMetrics(data.showMetrics);
+      }
+      if (Array.isArray(data.expandedIssueIds) && JSON.stringify(data.expandedIssueIds) !== JSON.stringify(expandedIssueIds)) {
+        setExpandedIssueIds(data.expandedIssueIds);
+      }
+      if (typeof data.targetLine === 'number' && data.targetLine !== targetLine) {
+        setTargetLine(data.targetLine);
+      }
+      if (typeof data.githubUrl === 'string' && data.githubUrl !== githubUrl) {
+        setGithubUrl(data.githubUrl);
+      }
+      if (typeof data.githubFilter === 'string' && data.githubFilter !== githubFilter) {
+        setGithubFilter(data.githubFilter);
+      }
+      if ((typeof data.preFixScore === 'number' || data.preFixScore === null) && data.preFixScore !== preFixScore) {
+        setPreFixScore(data.preFixScore);
+      }
+      if (Array.isArray(data.chatMessages) && JSON.stringify(data.chatMessages) !== JSON.stringify(chatMessagesRef.current)) {
+        setChatMessages(data.chatMessages);
       }
       if (Array.isArray(data.comments)) {
         setCollabComments(data.comments);
@@ -436,51 +566,73 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       if (typeof data.ownerUid === 'string') {
         setCollabOwnerUid(data.ownerUid);
       }
+      if (data.participantsInfo) {
+        const pInfo = data.participantsInfo as Record<string, { displayName: string, photoURL: string, role: string }>;
+        const list: Array<{ uid: string; displayName: string; photoURL: string; role: 'host' | 'participant' }> = Object.entries(pInfo).map(([uid, info]) => ({
+          uid,
+          displayName: info.displayName,
+          photoURL: info.photoURL,
+          role: info.role === 'host' ? 'host' : 'participant',
+        }));
+        setParticipants(list);
+      }
+
       if (data.status === 'closed' && data.ownerUid !== user.uid) {
         isRemoteUpdate.current = false;
         setCollabSessionId(null);
         setCollabOwnerUid(null);
         setCollabComments([]);
-        setCollabConnected(false);
+        // Connection closed
         setJoinSessionInput('');
         setSessionKicked(true);
         setTimeout(() => setSessionKicked(false), 4000);
         return;
       }
 
-      // Reset the flag after state updates have been queued
       setTimeout(() => {
         isRemoteUpdate.current = false;
       }, 100);
     });
     return () => unsub();
-  }, [collabSessionId]);
+  }, [collabSessionId, user.uid]); // Minimal dependencies to prevent re-subscribing loops
 
-  // Push local state changes to the collaborative session document
+  // Push local state changes to the collaborative session document (debounced)
   useEffect(() => {
-    if (!collabSessionId) return;
-    if (isRemoteUpdate.current) return;
+    if (!collabSessionId || isRemoteUpdate.current) return;
 
-    const sync = async () => {
-      const sessionRef = doc(db, 'collabSessions', collabSessionId);
-      await setDoc(
-        sessionRef,
-        {
-          code,
-          originalCode,
-          viewMode,
-          wasAutoFixed,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
-    };
+    const timeout = setTimeout(async () => {
+      try {
+        const sessionRef = doc(db, 'collabSessions', collabSessionId);
+        await setDoc(
+          sessionRef,
+          {
+            code,
+            originalCode,
+            viewMode,
+            wasAutoFixed,
+            preFixScore,
+            chatMessages,
+            inputMethod,
+            isAnalyzing,
+            isFixing,
+            selectedSeverity,
+            selectedCategory,
+            showMetrics,
+            expandedIssueIds,
+            targetLine,
+            githubUrl,
+            githubFilter,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      } catch (err) {
+        console.error('Failed to sync session state:', err);
+      }
+    }, 1500); // 1500ms debounce to save on writes while keeping it "real-time"
 
-    // Only sync if there is something to sync
-    if (code !== undefined) {
-      void sync();
-    }
-  }, [code, originalCode, viewMode, wasAutoFixed, collabSessionId]);
+    return () => clearTimeout(timeout);
+  }, [code, originalCode, viewMode, wasAutoFixed, preFixScore, chatMessages, collabSessionId]);
 
   /* ── Render ─────────────────────────────────────── */
   return (
@@ -522,7 +674,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           ].map(({ label, view, icon: Icon }) => (
             <button
               key={view}
-              onClick={() => onNavigate?.(view as any)}
+              onClick={() => onNavigate?.(view)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200"
               style={{
                 background: 'transparent',
@@ -577,78 +729,123 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           <div className="px-5 py-3 border-b flex items-center gap-3 flex-wrap"
             style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.2)' }}>
 
-            {/* View mode toggle (only when auto-fixed) */}
-            {originalCode && wasAutoFixed && (
-              <div className="ml-auto flex items-center gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                <button
-                  onClick={() => setViewMode('editor')}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                  style={viewMode === 'editor'
-                    ? { background: 'rgba(6,182,212,0.2)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.3)' }
-                    : { color: '#64748b' }
-                  }
-                >
-                  Editor
-                </button>
-                <button
-                  onClick={() => setViewMode('diff')}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
-                  style={viewMode === 'diff'
-                    ? { background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }
-                    : { color: '#64748b' }
-                  }
-                >
-                  <ArrowLeftRight className="w-3 h-3" /> Diff
-                </button>
-              </div>
-            )}
+            {/* Left side: View modes */}
+            <div className="flex items-center gap-2">
+              {originalCode && wasAutoFixed && (
+                <div className="flex items-center gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <button
+                    onClick={() => setViewMode('editor')}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all relative z-10 cursor-pointer"
+                    style={viewMode === 'editor'
+                      ? { background: 'rgba(6,182,212,0.2)', color: '#06b6d4', border: '1px solid rgba(6,182,212,0.3)' }
+                      : { color: '#64748b' }
+                    }
+                  >
+                    Editor
+                  </button>
+                  <button
+                    onClick={() => setViewMode('diff')}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all relative z-10 cursor-pointer"
+                    style={viewMode === 'diff'
+                      ? { background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }
+                      : { color: '#64748b' }
+                    }
+                  >
+                    <ArrowLeftRight className="w-3 h-3" /> Diff
+                  </button>
+                </div>
+              )}
+            </div>
 
-            {/* Collab session */}
-            <div className="ml-auto flex items-center gap-2">
+            {/* Right side: Collab session */}
+            <div className="ml-auto flex items-center gap-3">
               {collabSessionId ? (
                 <div className="flex items-center gap-2">
-                  <span className={`w-1.5 h-1.5 rounded-full ${collabConnected ? 'bg-green-400 animate-pulse' : 'bg-yellow-400 animate-pulse'}`} />
-                  <span className="text-xs font-mono" style={{ color: collabConnected ? '#4ade80' : '#facc15' }}>
-                    {collabConnected ? 'Connected' : 'Connecting…'}
-                  </span>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Live</span>
+                  </div>
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?session=${collabSessionId}`);
                       setLinkCopied(true);
                       setTimeout(() => setLinkCopied(false), 2000);
                     }}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors"
-                    style={{ background: 'rgba(255,255,255,0.05)', color: linkCopied ? '#4ade80' : '#94a3b8' }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all duration-200"
+                    style={{ 
+                      background: linkCopied ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.05)', 
+                      color: linkCopied ? '#4ade80' : '#94a3b8',
+                      border: `1px solid ${linkCopied ? 'rgba(74,222,128,0.2)' : 'rgba(255,255,255,0.1)'}`
+                    }}
                     title="Copy invite link"
                   >
                     <Copy className="w-3 h-3" />
-                    {linkCopied ? 'Copied!' : 'Copy link'}
+                    {linkCopied ? 'Copied Link!' : 'Invite'}
                   </button>
+                  
+                  {/* Participant list */}
+                  <div className="flex items-center -space-x-2 ml-2">
+                    {participants.map((p) => (
+                      <div 
+                        key={p.uid} 
+                        className="w-6 h-6 rounded-full border-2 border-[#0f172a] overflow-hidden bg-slate-800 flex items-center justify-center relative group"
+                        title={`${p.displayName} (${p.role})`}
+                      >
+                        {p.photoURL ? (
+                          <img src={p.photoURL} alt={p.displayName} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-400">{p.displayName[0]}</span>
+                        )}
+                        {p.role === 'host' && (
+                          <div className="absolute -top-1 -right-1 bg-amber-400 w-2 h-2 rounded-full border border-[#0f172a]" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {collabOwnerUid === user.uid ? (
+                    <button
+                      onClick={handleEndSession}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-red-400 hover:text-red-300 transition-colors uppercase tracking-wider"
+                      style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}
+                    >
+                      End Session
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleLeaveSession}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white transition-colors uppercase tracking-wider"
+                      style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                    >
+                      Leave
+                    </button>
+                  )}
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 relative z-10">
                   <button
                     onClick={handleStartCollabSession}
-                    className="px-3 py-1 rounded-lg text-xs font-semibold transition-all"
+                    disabled={isAnalyzing}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                     style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)' }}
                   >
                     + Session
                   </button>
-                  <input
-                    type="text"
-                    value={joinSessionInput}
-                    onChange={(e) => setJoinSessionInput(e.target.value)}
-                    placeholder="Session ID or link"
-                    className="text-xs px-2 py-1 rounded-lg w-28"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#f1f5f9', outline: 'none' }}
-                  />
-                  <button
-                    onClick={() => handleJoinSession(joinSessionInput)}
-                    className="px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all"
-                    style={{ background: 'rgba(255,255,255,0.05)' }}
-                  >
-                    Join
-                  </button>
+                  <div className="flex items-center bg-white/5 border border-white/10 rounded-lg overflow-hidden h-[30px]">
+                    <input
+                      type="text"
+                      value={joinSessionInput}
+                      onChange={(e) => setJoinSessionInput(e.target.value)}
+                      placeholder="Session ID…"
+                      className="text-[11px] px-2 w-24 bg-transparent border-none text-slate-200 outline-none"
+                    />
+                    <button
+                      onClick={() => handleJoinSession(joinSessionInput)}
+                      className="px-3 h-full text-[11px] font-bold bg-white/5 border-l border-white/10 text-slate-400 hover:text-white transition-all cursor-pointer"
+                    >
+                      Join
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -707,10 +904,17 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                 isAnalyzing={isAnalyzing}
                 code={code}
                 setCode={setCode}
-                targetLine={viewMode === 'editor' ? targetLine : null}
+                inputMethod={inputMethod}
+                setInputMethod={setInputMethod}
+                targetLine={targetLine}
+                setTargetLine={setTargetLine}
+                githubUrl={githubUrl}
+                setGithubUrl={setGithubUrl}
+                githubFilter={githubFilter}
+                setGithubFilter={setGithubFilter}
                 onLineNavigated={() => setTargetLine(null)}
                 issues={analysis?.issues ?? []}
-                onFolderFileSelect={(name, content, result) => {
+                onFolderFileSelect={(_name, content, result) => {
                   const a: AppAnalysis = { ...result };
                   setCode(content);
                   setAnalysis(a);
@@ -720,12 +924,16 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
               />
             </div>
             {viewMode === 'diff' && (
-              <DiffViewer original={originalCode || ''} modified={code} />
+              <DiffViewer 
+                original={originalCode || ''} 
+                modified={code} 
+                onClose={() => setViewMode('editor')}
+              />
             )}
           </div>
         </section>
 
-        {/* ── Right: Analysis panel ────────────────────── */}
+        {/* ── Right: Analysis panel (Always visible) ── */}
         <section className="w-full md:w-[420px] lg:w-[460px] flex-shrink-0 flex flex-col gap-3">
           <ReviewPanel
             analysis={analysis}
@@ -739,6 +947,14 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
             preFixScore={preFixScore}
             onIssueClick={(line) => setTargetLine(line)}
             onSaveSnippet={handleSaveSnippet}
+            selectedSeverity={selectedSeverity}
+            setSelectedSeverity={setSelectedSeverity}
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
+            showMetrics={showMetrics}
+            setShowMetrics={setShowMetrics}
+            expandedIssueIds={expandedIssueIds}
+            setExpandedIssueIds={setExpandedIssueIds}
           />
         </section>
       </main>

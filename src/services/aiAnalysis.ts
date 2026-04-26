@@ -170,7 +170,8 @@ async function proxyPost<T>(endpoint: string, body: Record<string, unknown>): Pr
       body: JSON.stringify(body),
     });
   } catch (err: any) {
-    throw new Error(`Connection failed: ${err.message}. Ensure your internet is working.`);
+    console.error('Fetch error:', err);
+    throw new Error(`Connection to analysis server failed (${err.message}). If you are running locally, ensure 'npm run dev' is active and you have an internet connection.`);
   }
 
   const contentType = resp.headers.get('content-type');
@@ -184,7 +185,11 @@ async function proxyPost<T>(endpoint: string, body: Record<string, unknown>): Pr
 
   const data = await resp.json() as Record<string, any>;
   if (!resp.ok || data.error) {
-    const errorMsg = data.details ? `${data.error}: ${data.details}` : (data.error ?? `Server error ${resp.status}`);
+    const rawError = data.details ? `${data.error}: ${data.details}` : (data.error ?? `Server error ${resp.status}`);
+    const errorMsg = String(rawError);
+    if (/quota|rate limit|429/i.test(errorMsg)) {
+      throw new Error('AI provider quota/rate limit reached. Please wait a few minutes or top up/upgrade your provider billing, then retry.');
+    }
     throw new Error(String(errorMsg));
   }
   return data as T;

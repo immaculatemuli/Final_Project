@@ -88,11 +88,19 @@ interface ReviewPanelProps {
   onAutoFix: () => void;
   sessionId: string;
   onRateIssue?: (index: number, rating: 1 | -1) => void;
-  onSaveReport?: (type: 'html' | 'email' | 'pdf', recipientEmail?: string, status?: 'downloaded' | 'sent' | 'failed') => void;
+  onSaveReport?: (type: 'html' | 'email' | 'pdf' | 'csv', recipientEmail?: string, status?: 'downloaded' | 'sent' | 'failed') => void;
   wasAutoFixed?: boolean;
   preFixScore?: number | null;
   onIssueClick?: (line: number) => void;
   onSaveSnippet?: () => void;
+  selectedSeverity: string;
+  setSelectedSeverity: (s: string) => void;
+  selectedCategory: string;
+  setSelectedCategory: (c: string) => void;
+  showMetrics: boolean;
+  setShowMetrics: (v: boolean | ((prev: boolean) => boolean)) => void;
+  expandedIssueIds: number[];
+  setExpandedIssueIds: (ids: number[] | ((prev: number[]) => number[])) => void;
 }
 
 const ReviewPanel: React.FC<ReviewPanelProps> = ({
@@ -105,18 +113,21 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   wasAutoFixed = false,
   preFixScore = null,
   onIssueClick,
-  onSaveSnippet
+  onSaveSnippet,
+  selectedSeverity,
+  setSelectedSeverity,
+  selectedCategory,
+  setSelectedCategory,
+  showMetrics,
+  setShowMetrics,
+  expandedIssueIds,
+  setExpandedIssueIds,
 }) => {
 
-  const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [expandedIssues, setExpandedIssues] = useState<Set<number>>(new Set());
-  const [showMetrics, setShowMetrics] = useState(true);
   const [copiedCode, setCopiedCode] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [recipientName, setRecipientName] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
-  const [recommendationToSend, setRecommendationToSend] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
@@ -139,7 +150,10 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const timer = setInterval(() => {
       frame++;
       const progress = frame / totalFrames;
-      setDisplayedScore(Math.round(target * progress));
+      const nextScore = Math.round(target * progress);
+      if (!isNaN(nextScore)) {
+        setDisplayedScore(nextScore);
+      }
       if (frame === totalFrames) clearInterval(timer);
     }, frameDuration);
 
@@ -148,33 +162,33 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Build email data object from current analysis
   const buildEmailData = (name: string) => {
-    if (!analysis) return null;
+    if (!analysis || !analysis.summary || !analysis.metrics) return null;
     return {
       recipientName: name || 'Developer',
       recipientEmail,
-      language: analysis.language,
-      score: analysis.overallScore,
-      totalIssues: analysis.summary.totalIssues,
-      criticalIssues: analysis.summary.criticalIssues,
-      highIssues: analysis.summary.highIssues,
-      mediumIssues: analysis.summary.mediumIssues,
-      lowIssues: analysis.summary.lowIssues,
+      language: analysis.language || 'Unknown',
+      score: analysis.overallScore || 0,
+      totalIssues: analysis.summary?.totalIssues || 0,
+      criticalIssues: analysis.summary?.criticalIssues || 0,
+      highIssues: analysis.summary?.highIssues || 0,
+      mediumIssues: analysis.summary?.mediumIssues || 0,
+      lowIssues: analysis.summary?.lowIssues || 0,
       issues: (analysis.issues ?? []).map(i => ({
-        severity: i.severity as 'critical' | 'high' | 'medium' | 'low',
-        category: i.category,
-        message: i.message,
+        severity: (i.severity || 'low') as 'critical' | 'high' | 'medium' | 'low',
+        category: i.category || 'General',
+        message: i.message || 'No message provided',
         line: i.line,
         suggestion: i.suggestion,
       })),
-      recommendations: analysis.recommendations,
-      technicalDebt: analysis.technicalDebt,
+      recommendations: analysis.recommendations || [],
+      technicalDebt: analysis.technicalDebt || 'N/A',
       metrics: {
-        complexity: analysis.metrics.complexity,
-        maintainability: analysis.metrics.maintainability,
-        security: analysis.metrics.security,
-        performance: analysis.metrics.performance,
-        documentation: analysis.metrics.documentation,
-        readability: analysis.metrics.readability,
+        complexity: analysis.metrics?.complexity || 0,
+        maintainability: analysis.metrics?.maintainability || 0,
+        security: analysis.metrics?.security || 0,
+        performance: analysis.metrics?.performance || 0,
+        documentation: analysis.metrics?.documentation || 0,
+        readability: analysis.metrics?.readability || 0,
       },
     };
   };
@@ -192,16 +206,6 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   const openSendModal = () => {
     if (!analysis) return;
-    const summary = [
-      `Language: ${analysis.language}`,
-      `Score: ${analysis.overallScore}%`,
-      `Total Issues: ${analysis.summary.totalIssues}`,
-      '',
-      'Recommendations:',
-      ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`),
-    ].join('\n');
-    setRecommendationToSend(summary);
-
     const data = buildEmailData('Developer');
     if (data) setPreviewHtml(generateHTMLEmail(data));
     setIframeKey(k => k + 1);
@@ -212,12 +216,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
     setIsModalOpen(false);
     setRecipientName('');
     setRecipientEmail('');
-    setRecommendationToSend('');
     setSending(false);
     setSendError(null);
     setSendSuccess(null);
     setPreviewHtml('');
   };
+
 
   /* ── Loading state ──────────────────────────────── */
   if (isAnalyzing) {
@@ -320,10 +324,13 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   });
 
   const toggleIssueExpansion = (index: number) => {
-    const newExpanded = new Set(expandedIssues);
-    if (newExpanded.has(index)) newExpanded.delete(index);
-    else newExpanded.add(index);
-    setExpandedIssues(newExpanded);
+    setExpandedIssueIds(prev => {
+      if (prev.includes(index)) {
+        return prev.filter(id => id !== index);
+      } else {
+        return [...prev, index];
+      }
+    });
   };
 
   const copyToClipboard = async (text: string, index: number) => {
@@ -357,11 +364,11 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className="min-w-0">
           <h2 className="text-base font-bold text-white">Analysis Results</h2>
           <p className="text-xs text-slate-400 flex items-center gap-2 mt-1 flex-wrap">
-            <span className="flex items-center gap-1"><Code className="w-3.5 h-3.5" />{analysis.language}</span>
+            <span className="flex items-center gap-1"><Code className="w-3.5 h-3.5" />{analysis.language || 'Code'}</span>
             <span>·</span>
-            <span>{analysis.summary.totalIssues} issues</span>
+            <span>{analysis.summary?.totalIssues || 0} issues</span>
             <span>·</span>
-            <span>{analysis.metrics.linesOfCode} LOC</span>
+            <span>{analysis.metrics?.linesOfCode || 0} LOC</span>
           </p>
         </div>
 
@@ -466,6 +473,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                   }
                 </button>
               )}
+
               {onSaveSnippet && (
                 <button
                   onClick={onSaveSnippet}
@@ -486,11 +494,11 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
         {/* Quick stats bar */}
         <div className="grid grid-cols-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
           {[
-            { label: 'Critical', value: analysis.summary.criticalIssues, color: '#f87171', sev: 'critical' },
-            { label: 'High', value: analysis.summary.highIssues, color: '#fb923c', sev: 'high' },
-            { label: 'Medium', value: analysis.summary.mediumIssues, color: '#facc15', sev: 'medium' },
-            { label: 'Low', value: analysis.summary.lowIssues, color: '#4ade80', sev: 'low' },
-            { label: 'Smells', value: analysis.codeSmells, color: '#a78bfa', sev: null },
+            { label: 'Critical', value: analysis.summary?.criticalIssues || 0, color: '#f87171', sev: 'critical' },
+            { label: 'High', value: analysis.summary?.highIssues || 0, color: '#fb923c', sev: 'high' },
+            { label: 'Medium', value: analysis.summary?.mediumIssues || 0, color: '#facc15', sev: 'medium' },
+            { label: 'Low', value: analysis.summary?.lowIssues || 0, color: '#4ade80', sev: 'low' },
+            { label: 'Smells', value: analysis.codeSmells || 0, color: '#a78bfa', sev: null },
           ].map((s, i) => (
             <button
               key={s.label}
@@ -521,12 +529,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
           {showMetrics && (
             <div className="grid grid-cols-2 gap-2.5">
               {[
-                { label: 'Complexity', value: analysis.metrics.complexity, icon: TrendingUp, color: '#06b6d4' },
-                { label: 'Maintainability', value: analysis.metrics.maintainability, icon: Target, color: '#8b5cf6' },
-                { label: 'Security', value: analysis.metrics.security, icon: Shield, color: '#ec4899' },
-                { label: 'Performance', value: analysis.metrics.performance, icon: Zap, color: '#f59e0b' },
-                { label: 'Documentation', value: analysis.metrics.documentation, icon: FileText, color: '#4ade80' },
-                { label: 'Readability', value: analysis.metrics.readability, icon: Clock, color: '#a78bfa' },
+                { label: 'Complexity', value: analysis.metrics?.complexity || 0, icon: TrendingUp, color: '#06b6d4' },
+                { label: 'Maintainability', value: analysis.metrics?.maintainability || 0, icon: Target, color: '#8b5cf6' },
+                { label: 'Security', value: analysis.metrics?.security || 0, icon: Shield, color: '#ec4899' },
+                { label: 'Performance', value: analysis.metrics?.performance || 0, icon: Zap, color: '#f59e0b' },
+                { label: 'Documentation', value: analysis.metrics?.documentation || 0, icon: FileText, color: '#4ade80' },
+                { label: 'Readability', value: analysis.metrics?.readability || 0, icon: Clock, color: '#a78bfa' },
               ].map((m) => {
                 const Icon = m.icon;
                 return (
@@ -611,10 +619,9 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 className="rounded-xl overflow-hidden transition-all duration-200"
                 style={{ background: 'rgba(255,255,255,0.03)', border: `1px solid ${getIssueBorderColor(issue.severity)}` }}
               >
-                {/* Issue row */}
                 <div
                   className="flex items-start gap-3 p-3.5 cursor-pointer group"
-                  onClick={() => { toggleIssueExpansion(index); issue.line && onIssueClick?.(issue.line); }}
+                  onClick={() => { toggleIssueExpansion(index); if (issue.line) onIssueClick?.(issue.line); }}
                 >
                   <div className="flex-shrink-0 mt-0.5">{getSeverityIcon(issue.severity)}</div>
 
@@ -689,12 +696,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                   </div>
 
                   <div className="flex-shrink-0 text-slate-600 group-hover:text-slate-400 transition-colors mt-0.5">
-                    {expandedIssues.has(index) ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    {expandedIssueIds.includes(index) ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                   </div>
                 </div>
 
                 {/* Expanded details */}
-                {expandedIssues.has(index) && (
+                {expandedIssueIds.includes(index) && (
                   <div className="px-4 pb-4 pt-2 space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
 
                     {issue.suggestion && (
@@ -766,81 +773,33 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
         {analysis.recommendations && analysis.recommendations.length > 0 && (
           <div className="mx-4 mb-4 rounded-xl p-4"
             style={{ background: 'rgba(6,182,212,0.05)', border: '1px solid rgba(6,182,212,0.15)' }}>
-            <div className="flex items-center justify-between mb-3">
+
+            {/* ── Section header ── */}
+            <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold uppercase tracking-widest text-cyan-400 flex items-center gap-1.5">
                 <Lightbulb className="w-4 h-4" /> Recommendations
               </span>
-              <div className="flex gap-2">
-                <button
-                  onClick={async () => {
-                    const lines = [
-                      `Language: ${analysis.language}`,
-                      `Score: ${analysis.overallScore}%`,
-                      `Total Issues: ${analysis.summary.totalIssues}`,
-                      '',
-                      'Recommendations:',
-                      ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`),
-                    ].join('\n');
-                    try { await navigator.clipboard.writeText(lines); } catch {}
-                  }}
-                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
-                >
-                  <Copy className="w-3.5 h-3.5" />Copy
-                </button>
-                <button
-                  onClick={() => {
-                    if (!analysis) return;
-                    const scoreColor = analysis.overallScore >= 70 ? '#22c55e' : analysis.overallScore >= 40 ? '#f59e0b' : '#ef4444';
-                    const issueRows = analysis.issues.map(issue => {
-                      const sc = issue.severity === 'critical' ? '#ef4444' : issue.severity === 'high' ? '#f97316' : issue.severity === 'medium' ? '#eab308' : '#22c55e';
-                      return `<tr>
-                        <td style="color:${sc};font-weight:600;padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.severity.toUpperCase()}</td>
-                        <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.category}</td>
-                        <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.message}</td>
-                        <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#6b7280">${issue.line ? `Line ${issue.line}` : '—'}</td>
-                      </tr>${issue.suggestion ? `<tr><td colspan="4" style="padding:3px 10px 10px;border-bottom:1px solid #e5e7eb;color:#4b5563;font-size:12px">💡 ${issue.suggestion}</td></tr>` : ''}`;
-                    }).join('');
-                    const metricBars = (['complexity','maintainability','readability','performance','security','documentation'] as const).map(k => {
-                      const v = analysis.metrics[k];
-                      const c = v >= 70 ? '#22c55e' : v >= 40 ? '#f59e0b' : '#ef4444';
-                      return `<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:12px;color:#374151">${k.charAt(0).toUpperCase()+k.slice(1)}</span><span style="font-size:12px;font-weight:600">${v}/100</span></div><div style="background:#e5e7eb;border-radius:4px;height:6px"><div style="background:${c};width:${v}%;height:100%;border-radius:4px"></div></div></div>`;
-                    }).join('');
-                    const recs = (analysis.recommendations||[]).map((r,i)=>`<li style="margin-bottom:6px">${r}</li>`).join('');
-                    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Code Analysis Report</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;padding:32px;font-size:14px}h2{font-size:15px;font-weight:600;margin:24px 0 12px;padding-bottom:6px;border-bottom:2px solid #e5e7eb}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#f9fafb;padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;border-bottom:2px solid #e5e7eb}@media print{body{padding:16px}}</style></head><body>
-                      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e5e7eb">
-                        <div><div style="font-size:22px;font-weight:700">Code Analysis Report</div><div style="color:#6b7280;font-size:13px;margin-top:4px">${analysis.language} · ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div></div>
-                        <div style="text-align:right"><div style="font-size:48px;font-weight:800;color:${scoreColor}">${analysis.overallScore}</div><div style="color:#6b7280;font-size:13px">/ 100</div></div>
-                      </div>
-                      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
-                        ${[['Critical',analysis.summary.criticalIssues,'#ef4444'],['High',analysis.summary.highIssues,'#f97316'],['Medium',analysis.summary.mediumIssues,'#eab308'],['Low',analysis.summary.lowIssues,'#22c55e']].map(([l,n,c])=>`<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:700;color:${c}">${n}</div><div style="font-size:11px;color:#6b7280;margin-top:2px">${l}</div></div>`).join('')}
-                      </div>
-                      <h2>Issues (${analysis.summary.totalIssues})</h2>
-                      <table><thead><tr><th>Severity</th><th>Category</th><th>Message</th><th>Location</th></tr></thead><tbody>${issueRows}</tbody></table>
-                      <h2>Metrics</h2>${metricBars}
-                      ${recs ? `<h2>Recommendations</h2><ol style="padding-left:20px">${recs}</ol>` : ''}
-                    </body></html>`;
-                    const w = window.open('', '_blank');
-                    if (!w) return;
-                    w.document.write(html);
-                    w.document.close();
-                    w.onload = () => w.print();
-                    onSaveReport?.('pdf', undefined, 'downloaded');
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                  style={{ background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' }}
-                >
-                  <Download className="w-3.5 h-3.5" />PDF
-                </button>
-                <button
-                  onClick={openSendModal}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all"
-                  style={{ background: 'linear-gradient(135deg, #1d4ed8, #7c3aed)' }}
-                >
-                  <Mail className="w-3.5 h-3.5" />Email Report
-                </button>
-              </div>
+              {/* Copy sits neatly next to the title */}
+              <button
+                onClick={async () => {
+                  const lines = [
+                    `Language: ${analysis.language}`,
+                    `Score: ${analysis.overallScore}%`,
+                    `Total Issues: ${analysis.summary.totalIssues}`,
+                    '',
+                    'Recommendations:',
+                    ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`),
+                  ].join('\n');
+                  try { await navigator.clipboard.writeText(lines); } catch (e) { console.error('Clipboard copy failed:', e); }
+                }}
+                className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 transition-colors px-2 py-1 rounded-md hover:bg-white/5"
+              >
+                <Copy className="w-3 h-3" /> Copy
+              </button>
             </div>
-            <ul className="space-y-2.5">
+
+            {/* ── Recommendations list ── */}
+            <ul className="space-y-2.5 mb-4">
               {analysis.recommendations.map((r, i) => (
                 <li key={i} className="flex items-start gap-2.5">
                   <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold text-white"
@@ -849,7 +808,80 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 </li>
               ))}
             </ul>
+
+            {/* ── Export buttons — equal width, below the list ── */}
+            <div className="grid grid-cols-2 gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <button
+                onClick={() => {
+                  if (!analysis) return;
+                  const scoreColor = analysis.overallScore >= 70 ? '#22c55e' : analysis.overallScore >= 40 ? '#f59e0b' : '#ef4444';
+                  const issueRows = analysis.issues.map(issue => {
+                    const sc = issue.severity === 'critical' ? '#ef4444' : issue.severity === 'high' ? '#f97316' : issue.severity === 'medium' ? '#eab308' : '#22c55e';
+                    return `<tr>
+                      <td style="color:${sc};font-weight:600;padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.severity.toUpperCase()}</td>
+                      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.category}</td>
+                      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.message}</td>
+                      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#6b7280">${issue.line ? `Line ${issue.line}` : '—'}</td>
+                    </tr>${issue.suggestion ? `<tr><td colspan="4" style="padding:3px 10px 10px;border-bottom:1px solid #e5e7eb;color:#4b5563;font-size:12px">💡 ${issue.suggestion}</td></tr>` : ''}`;
+                  }).join('');
+                  const metricBars = (['complexity','maintainability','readability','performance','security','documentation'] as const).map(k => {
+                    const v = analysis.metrics[k];
+                    const c = v >= 70 ? '#22c55e' : v >= 40 ? '#f59e0b' : '#ef4444';
+                    return `<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:12px;color:#374151">${k.charAt(0).toUpperCase()+k.slice(1)}</span><span style="font-size:12px;font-weight:600">${v}/100</span></div><div style="background:#e5e7eb;border-radius:4px;height:6px"><div style="background:${c};width:${v}%;height:100%;border-radius:4px"></div></div></div>`;
+                  }).join('');
+                  const recs = (analysis.recommendations||[]).map(r =>`<li style="margin-bottom:6px">${r}</li>`).join('');
+                  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Code Analysis Report</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;padding:32px;font-size:14px}h2{font-size:15px;font-weight:600;margin:24px 0 12px;padding-bottom:6px;border-bottom:2px solid #e5e7eb}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#f9fafb;padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;border-bottom:2px solid #e5e7eb}@media print{body{padding:16px}}</style></head><body>
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e5e7eb">
+                      <div><div style="font-size:22px;font-weight:700">Code Analysis Report</div><div style="color:#6b7280;font-size:13px;margin-top:4px">${analysis.language} · ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div></div>
+                      <div style="text-align:right"><div style="font-size:48px;font-weight:800;color:${scoreColor}">${analysis.overallScore}</div><div style="color:#6b7280;font-size:13px">/ 100</div></div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+                      ${[['Critical',analysis.summary.criticalIssues,'#ef4444'],['High',analysis.summary.highIssues,'#f97316'],['Medium',analysis.summary.mediumIssues,'#eab308'],['Low',analysis.summary.lowIssues,'#22c55e']].map(([l,n,c])=>`<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:700;color:${c}">${n}</div><div style="font-size:11px;color:#6b7280;margin-top:2px">${l}</div></div>`).join('')}
+                    </div>
+                    <h2>Issues (${analysis.summary.totalIssues})</h2>
+                    <table><thead><tr><th>Severity</th><th>Category</th><th>Message</th><th>Location</th></tr></thead><tbody>${issueRows}</tbody></table>
+                    <h2>Metrics</h2>${metricBars}
+                    ${recs ? `<h2>Recommendations</h2><ol style="padding-left:20px">${recs}</ol>` : ''}
+                  </body></html>`;
+
+                  // 1. Open report in a new tab and trigger print dialog
+                  const w = window.open('', '_blank');
+                  if (w) {
+                    w.document.write(html);
+                    w.document.close();
+                    w.onload = () => w.print();
+                  }
+
+                  // 2. Immediately download the report as a file
+                  const date = new Date().toISOString().slice(0, 10);
+                  const blob = new Blob([html], { type: 'text/html' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `intellicode-report-${analysis.language.toLowerCase()}-${date}.html`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+
+                  onSaveReport?.('pdf', undefined, 'downloaded');
+                }}
+                className="flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                style={{ background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' }}
+              >
+                <Download className="w-3.5 h-3.5" />PDF
+              </button>
+
+              <button
+                onClick={openSendModal}
+                className="flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all"
+                style={{ background: 'linear-gradient(135deg, #1d4ed8, #7c3aed)' }}
+              >
+                <Mail className="w-3.5 h-3.5" />Email
+              </button>
+            </div>
           </div>
+
         )}
 
         {/* Technical Debt */}
@@ -1015,23 +1047,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       const d = buildEmailData(recipientName);
                       if (!d) throw new Error('No analysis data');
                       const html = generateHTMLEmail(d);
-
-                      if (emailConfigured) {
-                        await sendAnalysisEmail(d, html);
-                        onSaveReport?.('email', recipientEmail, 'sent');
-                        setSendSuccess(`Report sent successfully to ${recipientEmail}!`);
-                        setTimeout(closeSendModal, 2500);
-                      } else {
-                        downloadEmailHTML(html, recipientName);
-                        onSaveReport?.('email', recipientEmail, 'sent');
-                        const plain = recommendationToSend;
-                        const mailto = `mailto:${recipientEmail}?subject=${encodeURIComponent(`${analysis?.language || 'Code'} Analysis — Score: ${analysis?.overallScore}/100`)}&body=${encodeURIComponent(plain.slice(0, 1800))}`;
-                        window.open(mailto, '_blank');
-                        setSendSuccess('HTML report downloaded and your mail client opened. Attach the file to your email!');
-                        setTimeout(closeSendModal, 3500);
-                      }
+                      await sendAnalysisEmail(d, html);
+                      onSaveReport?.('email', recipientEmail, 'sent');
+                      setSendSuccess(`✓ Report sent to ${recipientEmail}!`);
+                      setTimeout(closeSendModal, 3500);
                     } catch (err: unknown) {
-                      setSendError(err instanceof Error ? err.message : 'Failed to send email');
+                      setSendError(err instanceof Error ? err.message : 'Failed to prepare report');
                       onSaveReport?.('email', recipientEmail, 'failed');
                     } finally {
                       setSending(false);
@@ -1041,22 +1062,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
                   style={{ background: 'linear-gradient(135deg,#1d4ed8,#7c3aed)' }}
                 >
                   {sending ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Sending…
-                    </>
-                  ) : emailConfigured ? (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Send Email
-                    </>
+                    <><RefreshCw className="w-4 h-4 animate-spin" />Preparing…</>
                   ) : (
-                    <>
-                      <Mail className="w-4 h-4" />
-                      Download &amp; Open Mail Client
-                    </>
+                    <><Send className="w-4 h-4" />Send Report</>
                   )}
                 </button>
+
               </div>
 
             </div>{/* end scrollable body */}

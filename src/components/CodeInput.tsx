@@ -31,6 +31,13 @@ interface CodeInputProps {
   onLineNavigated?: () => void;
   issues?: IssueMarker[];
   onFolderFileSelect?: (name: string, content: string, analysis: AIAnalysisResult) => void;
+  inputMethod: 'paste' | 'upload' | 'folder' | 'github';
+  setInputMethod: (method: 'paste' | 'upload' | 'folder' | 'github') => void;
+  setTargetLine: (line: number | null) => void;
+  githubUrl: string;
+  setGithubUrl: (url: string) => void;
+  githubFilter: string;
+  setGithubFilter: (f: string) => void;
 }
 
 interface UploadedFile {
@@ -47,10 +54,10 @@ interface TooltipInfo {
 }
 
 const SEVERITY_COLORS: Record<string, { dot: string; bg: string; border: string; text: string }> = {
-  critical: { dot: 'bg-red-500',    bg: 'rgba(239,68,68,0.12)',   border: '#ef4444', text: 'text-red-400'   },
-  high:     { dot: 'bg-orange-500', bg: 'rgba(249,115,22,0.12)',  border: '#f97316', text: 'text-orange-400' },
-  medium:   { dot: 'bg-yellow-400', bg: 'rgba(234,179,8,0.12)',   border: '#eab308', text: 'text-yellow-400' },
-  low:      { dot: 'bg-blue-400',   bg: 'rgba(96,165,250,0.12)',  border: '#60a5fa', text: 'text-blue-400'   },
+  critical: { dot: 'bg-red-500', bg: 'rgba(239,68,68,0.12)', border: '#ef4444', text: 'text-red-400' },
+  high: { dot: 'bg-orange-500', bg: 'rgba(249,115,22,0.12)', border: '#f97316', text: 'text-orange-400' },
+  medium: { dot: 'bg-yellow-400', bg: 'rgba(234,179,8,0.12)', border: '#eab308', text: 'text-yellow-400' },
+  low: { dot: 'bg-blue-400', bg: 'rgba(96,165,250,0.12)', border: '#60a5fa', text: 'text-blue-400' },
 };
 
 function worstSeverity(issues: IssueMarker[]): string {
@@ -62,13 +69,15 @@ function worstSeverity(issues: IssueMarker[]): string {
 }
 
 export const CodeInput: React.FC<CodeInputProps> = (props) => {
-  const { code, setCode, isAnalyzing, onAnalyze, targetLine, onLineNavigated, issues = [], onFolderFileSelect } = props;
+  const { 
+    code, setCode, isAnalyzing, onAnalyze, targetLine, onLineNavigated, 
+    issues = [], onFolderFileSelect, inputMethod, setInputMethod,
+    setTargetLine, githubUrl, setGithubUrl, githubFilter, setGithubFilter
+  } = props;
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-
-  const [inputMethod, setInputMethod] = useState<'paste' | 'upload' | 'folder' | 'github'>('paste');
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [folderEntries, setFolderEntries] = useState<FolderEntry[]>([]);
   const [activeFolderIdx, setActiveFolderIdx] = useState<number | null>(null);
@@ -86,8 +95,9 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   // Build a map of line number -> issues for O(1) lookup
   const issuesByLine = React.useMemo(() => {
     const map: Record<number, IssueMarker[]> = {};
+    if (!Array.isArray(issues)) return map;
     for (const issue of issues) {
-      if (issue.line && issue.line > 0) {
+      if (issue && typeof issue.line === 'number' && issue.line > 0) {
         (map[issue.line] ??= []).push(issue);
       }
     }
@@ -107,17 +117,22 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
       const el = textareaRef.current;
       const lines = code.split('\n');
       const lineIndex = Math.max(0, targetLine - 1);
-      el.scrollTo({ top: lineIndex * LINE_H, behavior: 'smooth' });
-      if (gutterRef.current) gutterRef.current.scrollTop = lineIndex * LINE_H;
-      if (overlayRef.current) overlayRef.current.scrollTop = lineIndex * LINE_H;
-      el.focus();
-      let charPos = 0;
-      for (let i = 0; i < lineIndex && i < lines.length; i++) charPos += lines[i].length + 1;
-      el.setSelectionRange(charPos, charPos + (lines[lineIndex]?.length || 0));
-      // Flash the line 3 times
-      setFlashLine(targetLine);
-      setTimeout(() => setFlashLine(null), 1500);
-      setTimeout(() => onLineNavigated?.(), 500);
+      const lineCount = lines.length;
+      
+      if (lineIndex < lineCount) {
+        el.scrollTo({ top: lineIndex * LINE_H, behavior: 'smooth' });
+        if (gutterRef.current) gutterRef.current.scrollTop = lineIndex * LINE_H;
+        if (overlayRef.current) overlayRef.current.scrollTop = lineIndex * LINE_H;
+        el.focus();
+        
+        let charPos = 0;
+        for (let i = 0; i < lineIndex && i < lines.length; i++) charPos += (lines[i]?.length || 0) + 1;
+        el.setSelectionRange(charPos, charPos + (lines[lineIndex]?.length || 0));
+        
+        setFlashLine(targetLine);
+        setTimeout(() => setFlashLine(null), 1500);
+        setTimeout(() => onLineNavigated?.(), 500);
+      }
     }
   }, [targetLine, code, onLineNavigated]);
 
@@ -201,6 +216,16 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
           reader.readEntries(async (entries) => {
             if (!entries.length) { resolve(all); return; }
             for (const e of entries) {
+              // Skip heavy or hidden directories
+              if (e.isDirectory && (
+                e.name === 'node_modules' || 
+                e.name === '.git' || 
+                e.name === '.next' || 
+                e.name === 'dist' || 
+                e.name === 'build' ||
+                e.name.startsWith('.')
+              )) continue;
+              
               const files = await readEntryFiles(e);
               all.push(...files);
             }
@@ -224,11 +249,11 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
     setFolderEntries([]);
 
     const codeFiles = files
-      .filter(f => codeExtensions.some(ext => f.name.toLowerCase().endsWith(ext)) && f.size < 1024 * 1024)
-      .slice(0, 30);
+      .filter(f => f.size < 1024 * 1024) // Still limit individual file size to 1MB
+      .slice(0, 200); // Increased limit to 200 files
 
     if (!codeFiles.length) {
-      setUploadError('No supported code files found in this folder. Supported: .js .ts .py .java .cpp .go .rs .php .rb and more.');
+      setUploadError('No files found in this folder (or all files were over 1MB).');
       setIsUploading(false);
       return;
     }
@@ -285,7 +310,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
         await new Promise(r => setTimeout(r, 3000));
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onFolderFileSelect]);
 
   const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -326,25 +351,25 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
   };
 
   const sampleCode = `/**
- * Sample JavaScript function for demonstration
- */
-async function fetchUserData(userId) {
-  try {
-    const [userResponse, postsResponse] = await Promise.all([
-      fetch(\`/api/users/\${userId}\`),
-      fetch(\`/api/users/\${userId}/posts\`)
-    ]);
-    if (!userResponse.ok || !postsResponse.ok) {
-      throw new Error('Failed to fetch user data');
+  * Sample JavaScript function for demonstration
+  */
+  async function fetchUserData(userId) {
+    try {
+      const [userResponse, postsResponse] = await Promise.all([
+        fetch(\`/api/users/\${userId}\`),
+        fetch(\`/api/users/\${userId}/posts\`)
+      ]);
+      if (!userResponse.ok || !postsResponse.ok) {
+        throw new Error('Failed to fetch user data');
+      }
+      const userData = await userResponse.json();
+      const posts = await postsResponse.json();
+      return { user: userData, posts };
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+      throw error;
     }
-    const userData = await userResponse.json();
-    const posts = await postsResponse.json();
-    return { user: userData, posts };
-  } catch (error) {
-    console.error('Error fetching user data:', error);
-    throw error;
-  }
-}`;
+  }`;
 
   // Selected issue details (shown in the inline panel)
   const selectedIssues = selectedIssueLine ? (issuesByLine[selectedIssueLine] || []) : null;
@@ -361,10 +386,10 @@ async function fetchUserData(userId) {
               onClick={() => setInputMethod(method)}
               className={`px-3 py-1 text-xs rounded-md transition-colors ${inputMethod === method ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             >
-              {method === 'paste'  && <FileText className="w-3 h-3 inline mr-1" />}
-              {method === 'upload' && <Upload   className="w-3 h-3 inline mr-1" />}
-              {method === 'folder' && <Folder   className="w-3 h-3 inline mr-1" />}
-              {method === 'github' && <Github   className="w-3 h-3 inline mr-1" />}
+              {method === 'paste' && <FileText className="w-3 h-3 inline mr-1" />}
+              {method === 'upload' && <Upload className="w-3 h-3 inline mr-1" />}
+              {method === 'folder' && <Folder className="w-3 h-3 inline mr-1" />}
+              {method === 'github' && <Github className="w-3 h-3 inline mr-1" />}
               {method === 'paste' ? 'Paste' : method === 'upload' ? 'Upload' : method === 'folder' ? 'Folder' : 'GitHub'}
             </button>
           ))}
@@ -706,9 +731,9 @@ async function fetchUserData(userId) {
                     const hasErrors = critical > 0 || high > 0;
                     const leftColor = !isDone ? 'transparent'
                       : critical > 0 ? '#ef4444'
-                      : high > 0 ? '#f97316'
-                      : total > 0 ? '#eab308'
-                      : '#22c55e';
+                        : high > 0 ? '#f97316'
+                          : total > 0 ? '#eab308'
+                            : '#22c55e';
 
                     return (
                       <button
@@ -839,6 +864,10 @@ async function fetchUserData(userId) {
             onAnalyze(repoCode);
           }}
           isAnalyzing={isAnalyzing}
+          repoUrl={githubUrl}
+          setRepoUrl={setGithubUrl}
+          filter={githubFilter}
+          setFilter={setGithubFilter}
         />
       )}
 
@@ -846,29 +875,29 @@ async function fetchUserData(userId) {
       {/* Analyze button + character count                                    */}
       {/* ------------------------------------------------------------------ */}
       {inputMethod !== 'github' && (
-      <div className="mt-6 flex items-center justify-between">
-        <div className="text-sm text-gray-400">
-          {code ? (
-            <div className="flex items-center space-x-2">
-              <CheckCircle className="w-4 h-4 text-green-400" />
-              <span>{code.length.toLocaleString()} characters ready</span>
-              {uploadedFiles.length > 0 && <span className="text-gray-500">· {uploadedFiles.length} files</span>}
-            </div>
-          ) : (
-            'No code provided'
-          )}
+        <div className="mt-6 flex items-center justify-between">
+          <div className="text-sm text-gray-400">
+            {code ? (
+              <div className="flex items-center space-x-2">
+                <CheckCircle className="w-4 h-4 text-green-400" />
+                <span>{code.length.toLocaleString()} characters ready</span>
+                {uploadedFiles.length > 0 && <span className="text-gray-500">· {uploadedFiles.length} files</span>}
+              </div>
+            ) : (
+              'No code provided'
+            )}
+          </div>
+          <button
+            onClick={() => onAnalyze(code)}
+            disabled={!code || isAnalyzing || isUploading}
+            className="flex items-center space-x-2 px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 shadow-lg"
+          >
+            {isAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
+            <span className="font-medium">
+              {isAnalyzing ? 'Analyzing...' : isUploading ? 'Processing...' : 'Analyze Code'}
+            </span>
+          </button>
         </div>
-        <button
-          onClick={() => onAnalyze(code)}
-          disabled={!code || isAnalyzing || isUploading}
-          className="flex items-center space-x-2 px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 shadow-lg"
-        >
-          {isAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
-          <span className="font-medium">
-            {isAnalyzing ? 'Analyzing...' : isUploading ? 'Processing...' : 'Analyze Code'}
-          </span>
-        </button>
-      </div>
       )}
     </div>
   );
