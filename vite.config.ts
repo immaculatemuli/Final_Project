@@ -26,10 +26,11 @@ function readFunctionsEnv(): Record<string, string> {
     } catch { }
   };
   parseEnvFile(path.resolve('functions/.env'));
-  if (!env.OPENAI_API_KEY) {
-    parseEnvFile(path.resolve('.env.local'));
-    if (env.VITE_OPENAI_API_KEY) env.OPENAI_API_KEY = env.VITE_OPENAI_API_KEY;
-  }
+  // Always read root .env.local so non-functions variables (e.g. GitHub token)
+  // are available in the dev proxy.
+  parseEnvFile(path.resolve('.env.local'));
+  if (!env.OPENAI_API_KEY && env.VITE_OPENAI_API_KEY) env.OPENAI_API_KEY = env.VITE_OPENAI_API_KEY;
+  if (!env.GITHUB_TOKEN && env.VITE_GITHUB_TOKEN) env.GITHUB_TOKEN = env.VITE_GITHUB_TOKEN;
   return env;
 }
 
@@ -113,6 +114,7 @@ export default defineConfig(({ mode }) => {
   const OPENAI_KEY = directEnv.OPENAI_API_KEY || directEnv.VITE_OPENAI_API_KEY || env.OPENAI_API_KEY || '';
   const ENABLE_OPENAI_FALLBACK = (directEnv.ENABLE_OPENAI_FALLBACK || env.ENABLE_OPENAI_FALLBACK || '').toLowerCase() === 'true';
   const AI_KEY = GROQ_KEY || OPENAI_KEY;
+  const GITHUB_TOKEN = directEnv.GITHUB_TOKEN || directEnv.VITE_GITHUB_TOKEN || env.GITHUB_TOKEN || env.VITE_GITHUB_TOKEN || '';
   const AI_BASE_URL = GROQ_KEY ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
   const AI_MODEL = GROQ_KEY ? (directEnv.VITE_GROQ_MODEL || env.VITE_GROQ_MODEL || 'llama-3.1-8b-instant') : 'gpt-4o-mini';
 
@@ -166,11 +168,40 @@ export default defineConfig(({ mode }) => {
               try {
                 const body = await readBody(req);
                 const { owner, repo } = body as any;
-                const h = { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'Intellicode-App' };
+                const h: Record<string, string> = {
+                  Accept: 'application/vnd.github.v3+json',
+                  'User-Agent': 'Intellicode-App',
+                };
+                if (GITHUB_TOKEN) {
+                  h.Authorization = `Bearer ${GITHUB_TOKEN}`;
+                }
                 const rResp = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: h });
-                if (!rResp.ok) { sendJSON(res, rResp.status, { error: 'Repo not found' }); return; }
+                if (!rResp.ok) {
+                  const errText = await rResp.text();
+                  let details = `GitHub API ${rResp.status}`;
+                  try {
+                    const parsed = JSON.parse(errText) as { message?: string };
+                    if (parsed?.message) details = parsed.message;
+                  } catch {
+                    if (errText) details = errText.slice(0, 200);
+                  }
+                  sendJSON(res, rResp.status, { error: `Could not load ${owner}/${repo}: ${details}` });
+                  return;
+                }
                 const rData = await rResp.json() as any;
                 const tResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${rData.default_branch}?recursive=1`, { headers: h });
+                if (!tResp.ok) {
+                  const errText = await tResp.text();
+                  let details = `GitHub tree API ${tResp.status}`;
+                  try {
+                    const parsed = JSON.parse(errText) as { message?: string };
+                    if (parsed?.message) details = parsed.message;
+                  } catch {
+                    if (errText) details = errText.slice(0, 200);
+                  }
+                  sendJSON(res, tResp.status, { error: `Could not load repository tree: ${details}` });
+                  return;
+                }
                 const tData = await tResp.json() as any;
                 const root: any[] = [];
                 const dirMap: any = {};

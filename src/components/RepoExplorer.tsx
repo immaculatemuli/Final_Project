@@ -189,10 +189,32 @@ const TreeRow: React.FC<TreeRowProps> = ({ node, depth, selectedPath, onSelect, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoUrl]);
 
-  const parseRepoUrl = (url: string) => {
-    const m = url.match(/github\.com\/([^/\s]+)\/([^/\s]+)/);
-    if (!m) return null;
-    return { owner: m[1], repo: m[2].replace(/\.git$/, '') };
+  const parseRepoUrl = (rawInput: string) => {
+    const input = rawInput.trim();
+    if (!input) return null;
+
+    // Support "owner/repo" shorthand.
+    const shorthand = input.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+    if (shorthand) {
+      return { owner: shorthand[1], repo: shorthand[2].replace(/\.git$/i, '') };
+    }
+
+    try {
+      const normalized = /^https?:\/\//i.test(input) ? input : `https://${input}`;
+      const u = new URL(normalized);
+      if (!/^(www\.)?github\.com$/i.test(u.hostname)) return null;
+
+      const parts = u.pathname.split('/').filter(Boolean);
+      if (parts.length < 2) return null;
+
+      const owner = parts[0];
+      const repo = parts[1].replace(/\.git$/i, '');
+      if (!owner || !repo) return null;
+
+      return { owner, repo };
+    } catch {
+      return null;
+    }
   };
 
   const fetchTree = async () => {
