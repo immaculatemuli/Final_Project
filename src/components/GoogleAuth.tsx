@@ -35,7 +35,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
     } catch (e: any) {
       if (e.code === 'auth/popup-blocked') {
         setError('The Google login window was blocked. Please click the "Pop-up blocked" icon in your browser address bar and allow it.');
-      } else if (e.code === 'auth/cancelled-popup-request') {
+      } else if (e.code === 'auth/cancelled-popup-request' || e.code === 'auth/popup-closed-by-user') {
         // User closed the popup, ignore or show minimal error
       } else {
         setError(e.message || 'Failed to sign in with Google');
