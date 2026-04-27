@@ -54,22 +54,45 @@ const HistoryPage: React.FC<{
 
     const subscribe = (useOrder: boolean) => {
       const baseCol = collection(db, 'analyses');
-      const baseWhere = where('uid', '==', user.uid);
+      // Support both new userId and legacy uid
       const qry = useOrder
-        ? query(baseCol, baseWhere, orderBy('createdAt', 'desc'), limit(INITIAL_LIMIT))
-        : query(baseCol, baseWhere, limit(INITIAL_LIMIT));
+        ? query(baseCol, where('userId', '==', user.uid), orderBy('analysedAt', 'desc'), limit(INITIAL_LIMIT))
+        : query(baseCol, where('userId', '==', user.uid), limit(INITIAL_LIMIT));
 
       unsubscribe = onSnapshot(qry, (snap) => {
         const docs: AnalysisDoc[] = [];
         snap.forEach(d => {
-          const data = d.data() as { result?: AnalysisDoc['result']; createdAt?: unknown; analysis?: AnalysisDoc['result'] };
-          const result = data.analysis || data.result;
-          const codeSnippet = (data as any).codeSnippet;
+          const data = d.data() as any;
+          let result = data.analysis || data.result;
+          
+          // Reconstruct from flattened schema if needed
+          if (!result && data.errors) {
+            result = {
+              language: data.language || 'unknown',
+              score: data.overallScore || 0,
+              overallScore: data.overallScore || 0,
+              issues: [...(data.errors || []), ...(data.warnings || [])],
+              recommendations: data.recommendations || [],
+              summary: {
+                totalIssues: (data.errors?.length || 0) + (data.warnings?.length || 0),
+                criticalIssues: data.errors?.filter((i: any) => i.severity === 'critical').length || 0,
+                highIssues: data.errors?.filter((i: any) => i.severity === 'high').length || 0,
+                mediumIssues: data.warnings?.filter((i: any) => i.severity === 'medium').length || 0,
+                lowIssues: data.warnings?.filter((i: any) => i.severity === 'low').length || 0,
+              },
+              metrics: data.metrics || { linesOfCode: 0 },
+              technicalDebt: data.technicalDebt || 'Low',
+            };
+          }
+
+          const codeSnippet = data.codeSnippet || '';
+          const createdAt = data.analysedAt || data.createdAt;
+
           if (result) {
             if (codeSnippet && !result.codeSnippet) {
-              (result as any).codeSnippet = codeSnippet;
+              result.codeSnippet = codeSnippet;
             }
-            docs.push({ id: d.id, result: result, createdAt: (data as { createdAt?: unknown }).createdAt });
+            docs.push({ id: d.id, result: result, createdAt });
           }
         });
 
@@ -109,20 +132,43 @@ const HistoryPage: React.FC<{
 
     try {
       const baseCol = collection(db, 'analyses');
-      const baseWhere = where('uid', '==', user.uid);
-      const qry = query(baseCol, baseWhere, orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(INITIAL_LIMIT));
+      const baseWhere = where('userId', '==', user.uid);
+      const qry = query(baseCol, baseWhere, orderBy('analysedAt', 'desc'), startAfter(lastDoc), limit(INITIAL_LIMIT));
 
       const snap = await getDocs(qry);
       const newDocs: AnalysisDoc[] = [];
       snap.forEach(d => {
-        const data = d.data() as { result?: AnalysisDoc['result']; createdAt?: unknown; analysis?: AnalysisDoc['result'] };
-        const result = data.analysis || data.result;
-        const codeSnippet = (data as any).codeSnippet;
+        const data = d.data() as any;
+        let result = data.analysis || data.result;
+        
+        // Reconstruct from flattened schema if needed
+        if (!result && data.errors) {
+          result = {
+            language: data.language || 'unknown',
+            score: data.overallScore || 0,
+            overallScore: data.overallScore || 0,
+            issues: [...(data.errors || []), ...(data.warnings || [])],
+            recommendations: data.recommendations || [],
+            summary: {
+              totalIssues: (data.errors?.length || 0) + (data.warnings?.length || 0),
+              criticalIssues: data.errors?.filter((i: any) => i.severity === 'critical').length || 0,
+              highIssues: data.errors?.filter((i: any) => i.severity === 'high').length || 0,
+              mediumIssues: data.warnings?.filter((i: any) => i.severity === 'medium').length || 0,
+              lowIssues: data.warnings?.filter((i: any) => i.severity === 'low').length || 0,
+            },
+            metrics: data.metrics || { linesOfCode: 0 },
+            technicalDebt: data.technicalDebt || 'Low',
+          };
+        }
+
+        const codeSnippet = data.codeSnippet || '';
+        const createdAt = data.analysedAt || data.createdAt;
+
         if (result) {
           if (codeSnippet && !result.codeSnippet) {
-            (result as any).codeSnippet = codeSnippet;
+            result.codeSnippet = codeSnippet;
           }
-          newDocs.push({ id: d.id, result: result, createdAt: (data as { createdAt?: unknown }).createdAt });
+          newDocs.push({ id: d.id, result: result, createdAt });
         }
       });
 

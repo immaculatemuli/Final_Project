@@ -77,22 +77,28 @@ Ignore style, documentation, and minor best practices.
 
 Return JSON:
 {
-  "summary": "2-sentence overview",
+  "summary": "Detailed 2-sentence overview of the code's health",
   "overallScore": 0-100,
   "counts": { "critical": 0, "high": 0, "medium": 0, "low": 0, "codeSmells": 0 },
   "metrics": { "complexity": 0-100, "performance": 0-100, "maintainability": 0-100, "security": 0-100 },
   "issues": [{
     "severity": "critical|high|medium|low",
     "category": "Security|Performance|Logic",
-    "message": "Concise description",
+    "message": "Detailed description of the bug and its impact",
     "line": number,
-    "suggestion": "1-sentence fix",
+    "suggestion": "Actionable fix with brief explanation",
     "code": "problematic line",
     "fixedCode": "corrected line"
   }],
-  "recommendations": ["Highest impact fix 1", "rec 2"],
-  "technicalDebt": "Effort"
-}`;
+  "recommendations": [
+    "Specific, actionable improvement 1 based on the code structure",
+    "Detailed recommendation 2 targeting the highest risk area",
+    "Architectural or logic refinement suggestion 3"
+  ],
+  "technicalDebt": "Specific estimate (e.g. '4.5 hours to fix critical logical flaws')"
+}
+
+IMPORTANT: Recommendations must be SPECIFIC to the code provided, not generic advice. Focus on the most impactful logic and security refinements.`;
 
     const completion = await openai.chat.completions.create({
       model: process.env.GROQ_MODEL || (process.env.GROQ_API_KEY ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini'),

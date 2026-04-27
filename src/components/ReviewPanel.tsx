@@ -23,6 +23,7 @@ import {
   Eye,
   Send,
   RefreshCw,
+  User as UserIcon,
 } from 'lucide-react';
 import {
   generateHTMLEmail,
@@ -31,6 +32,7 @@ import {
   isEmailConfigured,
 } from '../services/emailService';
 
+/* ── SECTION: TYPES & INTERFACES ─────────────────── */
 interface Issue {
   type: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
@@ -103,6 +105,7 @@ interface ReviewPanelProps {
   setExpandedIssueIds: (ids: number[] | ((prev: number[]) => number[])) => void;
 }
 
+/* ── SECTION: MAIN COMPONENT ──────────────────────── */
 const ReviewPanel: React.FC<ReviewPanelProps> = ({
   analysis,
   isAnalyzing,
@@ -203,6 +206,15 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recipientName, isModalOpen]);
+
+  /* ── 1. Report Generation Logic ─────────────────── */
+  const handleDownloadHTML = async () => {
+    if (!analysis) return;
+    const data = buildEmailData('Developer');
+    if (data) setPreviewHtml(generateHTMLEmail(data));
+    setIframeKey(k => k + 1);
+    setIsModalOpen(true);
+  };
 
   const openSendModal = () => {
     if (!analysis) return;
@@ -351,12 +363,12 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const RING_R = 30;
   const RING_CIRC = 2 * Math.PI * RING_R; // ≈ 188.5
 
-  /* ── Main render ────────────────────────────────── */
+  /* ── SECTION: RENDER UI ─────────────────────────── */
   return (
     <>
     <div className="glass rounded-2xl overflow-hidden flex flex-col" style={{ border: '1px solid rgba(255,255,255,0.07)', minHeight: '400px' }}>
 
-      {/* ── Header ──────────────────────────────────── */}
+      {/* ── PART 1: OVERALL SCORE & STATS ─────────── */}
       <div className="px-5 py-4 flex items-center justify-between gap-4 flex-wrap flex-shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.25)' }}>
 
@@ -491,74 +503,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
       {/* ── Scrollable body ─────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* Quick stats bar */}
-        <div className="grid grid-cols-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          {[
-            { label: 'Critical', value: analysis.summary?.criticalIssues || 0, color: '#f87171', sev: 'critical' },
-            { label: 'High', value: analysis.summary?.highIssues || 0, color: '#fb923c', sev: 'high' },
-            { label: 'Medium', value: analysis.summary?.mediumIssues || 0, color: '#facc15', sev: 'medium' },
-            { label: 'Low', value: analysis.summary?.lowIssues || 0, color: '#4ade80', sev: 'low' },
-            { label: 'Smells', value: analysis.codeSmells || 0, color: '#a78bfa', sev: null },
-          ].map((s, i) => (
-            <button
-              key={s.label}
-              onClick={() => s.sev && setSelectedSeverity(s.sev)}
-              className="py-3.5 text-center transition-colors hover:bg-white/5 rounded"
-              style={{
-                background: 'rgba(0,0,0,0.18)',
-                borderRight: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                cursor: s.sev ? 'pointer' : 'default',
-              }}
-            >
-              <div className="text-lg font-bold" style={{ color: s.color }}>{s.value}</div>
-              <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
-            </button>
-          ))}
-        </div>
-
-        {/* Metrics */}
-        <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <button
-            className="w-full flex items-center justify-between mb-3"
-            onClick={() => setShowMetrics(v => !v)}
-          >
-            <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">Quality Metrics</span>
-            <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${showMetrics ? '' : '-rotate-90'}`} />
-          </button>
-
-          {showMetrics && (
-            <div className="grid grid-cols-2 gap-2.5">
-              {[
-                { label: 'Complexity', value: analysis.metrics?.complexity || 0, icon: TrendingUp, color: '#06b6d4' },
-                { label: 'Maintainability', value: analysis.metrics?.maintainability || 0, icon: Target, color: '#8b5cf6' },
-                { label: 'Security', value: analysis.metrics?.security || 0, icon: Shield, color: '#ec4899' },
-                { label: 'Performance', value: analysis.metrics?.performance || 0, icon: Zap, color: '#f59e0b' },
-                { label: 'Documentation', value: analysis.metrics?.documentation || 0, icon: FileText, color: '#4ade80' },
-                { label: 'Readability', value: analysis.metrics?.readability || 0, icon: Clock, color: '#a78bfa' },
-              ].map((m) => {
-                const Icon = m.icon;
-                return (
-                  <div key={m.label} className="rounded-xl p-3.5"
-                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderLeft: `3px solid ${m.color}30` }}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-1.5">
-                        <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: m.color }} />
-                        <span className="text-xs text-slate-300">{m.label}</span>
-                      </div>
-                      <span className="text-sm font-bold" style={{ color: m.color }}>{m.value}%</span>
-                    </div>
-                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                      <div className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${m.value}%`, background: `linear-gradient(90deg, ${m.color}60, ${m.color})` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Filter bar */}
+        {/* ── PART 2: FILTERS & CATEGORIES ────────────── */}
         <div className="px-5 py-3 flex items-center gap-2 flex-wrap"
           style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)' }}>
           <Filter className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
@@ -595,7 +540,7 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
           </button>
         </div>
 
-        {/* Issues list */}
+        {/* ── PART 3: CODE ISSUES LIST ────────────────── */}
         <div className="p-4 space-y-2.5">
           {filteredIssues.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center space-y-3">
@@ -769,6 +714,48 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
           )}
         </div>
 
+        {/* ── PART 4: RECOMMENDATIONS & METRICS ───────── */}
+        <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <button
+            className="w-full flex items-center justify-between mb-3"
+            onClick={() => setShowMetrics(v => !v)}
+          >
+            <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">Quality Metrics</span>
+            <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${showMetrics ? '' : '-rotate-90'}`} />
+          </button>
+
+          {showMetrics && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {[
+                { label: 'Complexity', value: analysis.metrics?.complexity || 0, icon: TrendingUp, color: '#06b6d4' },
+                { label: 'Maintainability', value: analysis.metrics?.maintainability || 0, icon: Target, color: '#8b5cf6' },
+                { label: 'Security', value: analysis.metrics?.security || 0, icon: Shield, color: '#ec4899' },
+                { label: 'Performance', value: analysis.metrics?.performance || 0, icon: Zap, color: '#f59e0b' },
+                { label: 'Documentation', value: analysis.metrics?.documentation || 0, icon: FileText, color: '#4ade80' },
+                { label: 'Readability', value: analysis.metrics?.readability || 0, icon: Clock, color: '#a78bfa' },
+              ].map((m) => {
+                const Icon = m.icon;
+                return (
+                  <div key={m.label} className="rounded-xl p-3.5"
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderLeft: `3px solid ${m.color}30` }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color: m.color }} />
+                        <span className="text-xs text-slate-300">{m.label}</span>
+                      </div>
+                      <span className="text-sm font-bold" style={{ color: m.color }}>{m.value}%</span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                      <div className="h-full rounded-full transition-all duration-700"
+                        style={{ width: `${m.value}%`, background: `linear-gradient(90deg, ${m.color}60, ${m.color})` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Recommendations */}
         {analysis.recommendations && analysis.recommendations.length > 0 && (
           <div className="mx-4 mb-4 rounded-xl p-4"
@@ -779,200 +766,136 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
               <span className="text-xs font-semibold uppercase tracking-widest text-cyan-400 flex items-center gap-1.5">
                 <Lightbulb className="w-4 h-4" /> Recommendations
               </span>
-              {/* Copy sits neatly next to the title */}
               <button
-                onClick={async () => {
-                  const lines = [
-                    `Language: ${analysis.language}`,
-                    `Score: ${analysis.overallScore}%`,
-                    `Total Issues: ${analysis.summary.totalIssues}`,
-                    '',
-                    'Recommendations:',
-                    ...analysis.recommendations.map((r, i) => `${i + 1}. ${r}`),
-                  ].join('\n');
-                  try { await navigator.clipboard.writeText(lines); } catch (e) { console.error('Clipboard copy failed:', e); }
-                }}
-                className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 transition-colors px-2 py-1 rounded-md hover:bg-white/5"
+                onClick={() => copyToClipboard(analysis.recommendations.join('\n'), -2)}
+                className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
               >
-                <Copy className="w-3 h-3" /> Copy
+                {copiedCode === -2 ? 'Copied' : 'Copy All'}
               </button>
             </div>
 
-            {/* ── Recommendations list ── */}
-            <ul className="space-y-2.5 mb-4">
-              {analysis.recommendations.map((r, i) => (
-                <li key={i} className="flex items-start gap-2.5">
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold text-white"
-                    style={{ background: 'rgba(6,182,212,0.3)' }}>{i + 1}</span>
-                  <span className="text-sm text-slate-300 leading-relaxed">{r}</span>
-                </li>
+            <div className="space-y-2">
+              {analysis.recommendations.map((rec, i) => (
+                <div key={i} className="flex gap-2.5 group">
+                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-cyan-500/40 group-hover:bg-cyan-500 transition-colors" />
+                  <p className="text-sm text-slate-300 leading-relaxed">{rec}</p>
+                </div>
               ))}
-            </ul>
-
-            {/* ── Export buttons — equal width, below the list ── */}
-            <div className="grid grid-cols-2 gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-              <button
-                onClick={() => {
-                  if (!analysis) return;
-                  const scoreColor = analysis.overallScore >= 70 ? '#22c55e' : analysis.overallScore >= 40 ? '#f59e0b' : '#ef4444';
-                  const issueRows = analysis.issues.map(issue => {
-                    const sc = issue.severity === 'critical' ? '#ef4444' : issue.severity === 'high' ? '#f97316' : issue.severity === 'medium' ? '#eab308' : '#22c55e';
-                    return `<tr>
-                      <td style="color:${sc};font-weight:600;padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.severity.toUpperCase()}</td>
-                      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.category}</td>
-                      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb">${issue.message}</td>
-                      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;color:#6b7280">${issue.line ? `Line ${issue.line}` : '—'}</td>
-                    </tr>${issue.suggestion ? `<tr><td colspan="4" style="padding:3px 10px 10px;border-bottom:1px solid #e5e7eb;color:#4b5563;font-size:12px">💡 ${issue.suggestion}</td></tr>` : ''}`;
-                  }).join('');
-                  const metricBars = (['complexity','maintainability','readability','performance','security','documentation'] as const).map(k => {
-                    const v = analysis.metrics[k];
-                    const c = v >= 70 ? '#22c55e' : v >= 40 ? '#f59e0b' : '#ef4444';
-                    return `<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:12px;color:#374151">${k.charAt(0).toUpperCase()+k.slice(1)}</span><span style="font-size:12px;font-weight:600">${v}/100</span></div><div style="background:#e5e7eb;border-radius:4px;height:6px"><div style="background:${c};width:${v}%;height:100%;border-radius:4px"></div></div></div>`;
-                  }).join('');
-                  const recs = (analysis.recommendations||[]).map(r =>`<li style="margin-bottom:6px">${r}</li>`).join('');
-                  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Code Analysis Report</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;padding:32px;font-size:14px}h2{font-size:15px;font-weight:600;margin:24px 0 12px;padding-bottom:6px;border-bottom:2px solid #e5e7eb}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#f9fafb;padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;border-bottom:2px solid #e5e7eb}@media print{body{padding:16px}}</style></head><body>
-                    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e5e7eb">
-                      <div><div style="font-size:22px;font-weight:700">Code Analysis Report</div><div style="color:#6b7280;font-size:13px;margin-top:4px">${analysis.language} · ${new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})}</div></div>
-                      <div style="text-align:right"><div style="font-size:48px;font-weight:800;color:${scoreColor}">${analysis.overallScore}</div><div style="color:#6b7280;font-size:13px">/ 100</div></div>
-                    </div>
-                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
-                      ${[['Critical',analysis.summary.criticalIssues,'#ef4444'],['High',analysis.summary.highIssues,'#f97316'],['Medium',analysis.summary.mediumIssues,'#eab308'],['Low',analysis.summary.lowIssues,'#22c55e']].map(([l,n,c])=>`<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:700;color:${c}">${n}</div><div style="font-size:11px;color:#6b7280;margin-top:2px">${l}</div></div>`).join('')}
-                    </div>
-                    <h2>Issues (${analysis.summary.totalIssues})</h2>
-                    <table><thead><tr><th>Severity</th><th>Category</th><th>Message</th><th>Location</th></tr></thead><tbody>${issueRows}</tbody></table>
-                    <h2>Metrics</h2>${metricBars}
-                    ${recs ? `<h2>Recommendations</h2><ol style="padding-left:20px">${recs}</ol>` : ''}
-                  </body></html>`;
-
-                  // 1. Open report in a new tab and trigger print dialog
-                  const w = window.open('', '_blank');
-                  if (w) {
-                    w.document.write(html);
-                    w.document.close();
-                    w.onload = () => w.print();
-                  }
-
-                  // 2. Immediately download the report as a file
-                  const date = new Date().toISOString().slice(0, 10);
-                  const blob = new Blob([html], { type: 'text/html' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `intellicode-report-${analysis.language.toLowerCase()}-${date}.html`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(url);
-
-                  onSaveReport?.('pdf', undefined, 'downloaded');
-                }}
-                className="flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                style={{ background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' }}
-              >
-                <Download className="w-3.5 h-3.5" />PDF
-              </button>
-
-              <button
-                onClick={openSendModal}
-                className="flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all"
-                style={{ background: 'linear-gradient(135deg, #1d4ed8, #7c3aed)' }}
-              >
-                <Mail className="w-3.5 h-3.5" />Email
-              </button>
             </div>
           </div>
-
         )}
+      </div>
 
-        {/* Technical Debt */}
-        {analysis.technicalDebt && (
-          <div className="mx-4 mb-4 rounded-xl p-4"
-            style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)' }}>
-            <h3 className="text-xs font-semibold uppercase tracking-widest text-amber-400 mb-2 flex items-center gap-2">
-              <Clock className="w-4 h-4" /> Technical Debt
-            </h3>
-            <p className="text-sm text-slate-300 leading-relaxed">{analysis.technicalDebt}</p>
-          </div>
-        )}
+      {/* ── PART 5: REPORT EXPORT CONTROLS ──────────── */}
+      <div className="p-4 border-t border-white/5 space-y-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDownloadHTML}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white transition-all"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            <Download className="w-4 h-4" /> Download HTML
+          </button>
+          <button
+            onClick={openSendModal}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white transition-all"
+            style={{ background: 'linear-gradient(135deg, #06b6d4, #8b5cf6)' }}
+          >
+            <Mail className="w-4 h-4" /> Email Report
+          </button>
+        </div>
+      </div>
+    </div>
 
-      </div>{/* end scrollable body */}
-
-    </div>{/* end glass panel */}
-
-    {/* ── Email Modal — rendered outside glass to escape backdrop-filter stacking context ── */}
+    {/* Report / Email Modal */}
     {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}>
-          <div className="w-full max-w-3xl rounded-2xl overflow-hidden shadow-2xl flex flex-col"
-            style={{ maxHeight: '92vh', background: '#0f172a', border: '1px solid #1e293b' }}>
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="glass w-full max-w-4xl max-h-[90vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-white/10"
+          style={{ background: '#0a0f1d' }}>
 
-            {/* Modal header */}
-            <div className="flex items-center justify-between px-6 py-4 flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg,#1d4ed8 0%,#7c3aed 100%)' }}>
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
-                  <Mail className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-white text-base leading-tight">Send Code Analysis Report</h4>
-                  <p className="text-blue-200 text-xs mt-0.5">Beautifully formatted HTML email</p>
+          {/* Modal Header */}
+          <div className="px-6 py-4 flex items-center justify-between border-b border-white/5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center">
+                <FileText className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">Analysis Report</h3>
+                <p className="text-xs text-slate-500">Configure and export your code audit</p>
+              </div>
+            </div>
+            <button onClick={closeSendModal} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-white/5 hover:text-white transition-all">
+              <XCircle className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto flex flex-col lg:flex-row min-h-0">
+            {/* Left: Settings */}
+            <div className="w-full lg:w-80 border-r border-white/5 p-6 space-y-6 overflow-y-auto">
+              <div className="space-y-4">
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Recipient Details</h4>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-400 ml-1">Recipient Name</label>
+                    <div className="relative">
+                      <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        placeholder="e.g. Lead Developer"
+                        value={recipientName}
+                        onChange={(e) => setRecipientName(e.target.value)}
+                        className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:border-cyan-500/50 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-400 ml-1">Recipient Email</label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <input
+                        type="email"
+                        placeholder="dev@example.com"
+                        value={recipientEmail}
+                        onChange={(e) => setRecipientEmail(e.target.value)}
+                        className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:border-cyan-500/50 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-              <button onClick={closeSendModal}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors">
-                <XCircle className="w-5 h-5 text-white" />
-              </button>
+
+              <div className="space-y-4">
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Inclusions</h4>
+                <div className="space-y-2">
+                  {[
+                    { label: 'Full Issue List', checked: true },
+                    { label: 'Risk Metrics', checked: true },
+                    { label: 'Security Scan', checked: true },
+                    { label: 'AI Recommendations', checked: true },
+                  ].map(item => (
+                    <div key={item.label} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/5 border border-white/5">
+                      <div className="w-4 h-4 rounded border border-cyan-500 flex items-center justify-center bg-cyan-500">
+                        <CheckCircle className="w-3 h-3 text-white" />
+                      </div>
+                      <span className="text-xs text-slate-300">{item.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            {/* Scrollable body */}
-            <div className="overflow-y-auto flex-1 min-h-0">
-
-              {/* Recipient fields */}
-              <div className="px-6 pt-5 pb-4" style={{ borderBottom: '1px solid #1e293b' }}>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Recipient Details</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1.5">Full Name</label>
-                    <input
-                      type="text"
-                      className="w-full px-3 py-2.5 rounded-lg text-sm text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                      style={{ background: '#1e293b', border: '1px solid #334155' }}
-                      value={recipientName}
-                      onChange={e => setRecipientName(e.target.value)}
-                      placeholder="e.g. Jane Doe"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1.5">Email Address</label>
-                    <input
-                      type="email"
-                      className="w-full px-3 py-2.5 rounded-lg text-sm text-white placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                      style={{ background: '#1e293b', border: '1px solid #334155' }}
-                      value={recipientEmail}
-                      onChange={e => setRecipientEmail(e.target.value)}
-                      placeholder="developer@example.com"
-                    />
-                  </div>
+            {/* Right: Preview */}
+            <div className="flex-1 bg-black/20 p-6 flex flex-col overflow-hidden min-h-[400px]">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Document Preview</h4>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                  <span className="text-[10px] text-slate-500 font-mono">Live Preview Rendering</span>
                 </div>
               </div>
 
-              {/* Email preview */}
-              <div className="px-6 pt-4 pb-4" style={{ borderBottom: '1px solid #1e293b' }}>
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-                    <Eye className="w-3.5 h-3.5" /> Email Preview
-                  </p>
-                  <button
-                    className="text-xs text-slate-400 hover:text-blue-400 flex items-center gap-1 transition-colors"
-                    onClick={() => {
-                      const d = buildEmailData(recipientName || 'Developer');
-                      if (d) { setPreviewHtml(generateHTMLEmail(d)); setIframeKey(k => k + 1); }
-                    }}
-                  >
-                    <RefreshCw className="w-3 h-3" /> Refresh
-                  </button>
-                </div>
-                <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #334155', height: '380px' }}>
+              <div className="flex-1 bg-[#0f172a] rounded-2xl border border-white/10 overflow-hidden shadow-inner flex flex-col">
+                <div className="flex-1 relative">
                   <iframe
                     key={iframeKey}
                     ref={iframeRef}
@@ -1073,8 +996,8 @@ const ReviewPanel: React.FC<ReviewPanelProps> = ({
             </div>{/* end scrollable body */}
           </div>
         </div>
-      )}
-
+      </div>
+    )}
     </>
   );
 };

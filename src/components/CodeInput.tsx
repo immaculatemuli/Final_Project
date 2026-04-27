@@ -4,6 +4,7 @@ import { analyzeCodeWithAI, detectLanguage } from '../services/aiAnalysis';
 import type { AIAnalysisResult } from '../services/aiAnalysis';
 import RepoExplorer from './RepoExplorer';
 
+/* ── SECTION: TYPES & INTERFACES ─────────────────── */
 // Minimal issue shape needed for highlighting
 interface IssueMarker {
   line?: number;
@@ -69,8 +70,8 @@ function worstSeverity(issues: IssueMarker[]): string {
 }
 
 export const CodeInput: React.FC<CodeInputProps> = (props) => {
-  const { 
-    code, setCode, isAnalyzing, onAnalyze, targetLine, onLineNavigated, 
+  const {
+    code, setCode, isAnalyzing, onAnalyze, targetLine, onLineNavigated,
     issues = [], onFolderFileSelect, inputMethod, setInputMethod,
     setTargetLine, githubUrl, setGithubUrl, githubFilter, setGithubFilter
   } = props;
@@ -118,17 +119,17 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
       const lines = code.split('\n');
       const lineIndex = Math.max(0, targetLine - 1);
       const lineCount = lines.length;
-      
+
       if (lineIndex < lineCount) {
         el.scrollTo({ top: lineIndex * LINE_H, behavior: 'smooth' });
         if (gutterRef.current) gutterRef.current.scrollTop = lineIndex * LINE_H;
         if (overlayRef.current) overlayRef.current.scrollTop = lineIndex * LINE_H;
         el.focus();
-        
+
         let charPos = 0;
         for (let i = 0; i < lineIndex && i < lines.length; i++) charPos += (lines[i]?.length || 0) + 1;
         el.setSelectionRange(charPos, charPos + (lines[lineIndex]?.length || 0));
-        
+
         setFlashLine(targetLine);
         setTimeout(() => setFlashLine(null), 1500);
         setTimeout(() => onLineNavigated?.(), 500);
@@ -218,14 +219,14 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
             for (const e of entries) {
               // Skip heavy or hidden directories
               if (e.isDirectory && (
-                e.name === 'node_modules' || 
-                e.name === '.git' || 
-                e.name === '.next' || 
-                e.name === 'dist' || 
+                e.name === 'node_modules' ||
+                e.name === '.git' ||
+                e.name === '.next' ||
+                e.name === 'dist' ||
                 e.name === 'build' ||
                 e.name.startsWith('.')
               )) continue;
-              
+
               const files = await readEntryFiles(e);
               all.push(...files);
             }
@@ -379,7 +380,7 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-white">Code Input</h2>
-        <div className="flex space-x-1">
+        <div className="flex flex-wrap gap-1">
           {(['paste', 'upload', 'folder', 'github'] as const).map(method => (
             <button
               key={method}
@@ -586,9 +587,9 @@ export const CodeInput: React.FC<CodeInputProps> = (props) => {
             {/* Detected language badge */}
             {(() => {
               const LANG_COLORS: Record<string, string> = {
-                TypeScript: '#3178c6', JavaScript: '#f0c000', Python: '#3572A5',
+                TypeScript: '#3178c6', JavaScript: '#f0c000', Python: '#3702A5',
                 Java: '#b07219', 'C#': '#178600', 'C/C++': '#6b7280',
-                Go: '#00ADD8', Rust: '#c4600a', PHP: '#4F5D95', Ruby: '#701516',
+                Go: '#00ADD8', Rust: '#c4600a', PHP: '#007d43ff', Ruby: '#701516',
               };
               const lang = code.trim() ? detectLanguage(code) : 'Unknown';
               if (lang === 'Unknown') return null;

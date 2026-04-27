@@ -41,15 +41,20 @@ export const SnippetsPage: React.FC<SnippetsPageProps> = ({ user, onNavigate, on
   useEffect(() => {
     const q = query(
       collection(db, 'bookmarks'),
-      where('uid', '==', user.uid),
+      where('userId', '==', user.uid),
       orderBy('createdAt', 'desc')
     );
 
     const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-      })) as Snippet[];
+      const docs = snap.docs.map(d => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          code: data.codeContent || data.code,
+          analysis: data.analysis || { language: data.language || 'Unknown', overallScore: 0, summary: { totalIssues: 0 } },
+          createdAt: data.createdAt
+        };
+      }) as Snippet[];
       setSnippets(docs);
       setLoading(false);
     });

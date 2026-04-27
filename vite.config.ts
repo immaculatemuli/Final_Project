@@ -111,9 +111,8 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const directEnv = readFunctionsEnv();
   const GROQ_KEY = directEnv.VITE_GROQ_API_KEY || directEnv.GROQ_API_KEY || env.VITE_GROQ_API_KEY || '';
-  const OPENAI_KEY = directEnv.OPENAI_API_KEY || directEnv.VITE_OPENAI_API_KEY || env.OPENAI_API_KEY || '';
-  const ENABLE_OPENAI_FALLBACK = (directEnv.ENABLE_OPENAI_FALLBACK || env.ENABLE_OPENAI_FALLBACK || '').toLowerCase() === 'true';
-  const AI_KEY = GROQ_KEY || OPENAI_KEY;
+  const GROQ_FALLBACK_KEY = directEnv.VITE_GROQ_FALLBACK_API_KEY || env.VITE_GROQ_FALLBACK_API_KEY || '';
+  const AI_KEY = GROQ_KEY || GROQ_FALLBACK_KEY;
   const GITHUB_TOKEN = directEnv.GITHUB_TOKEN || directEnv.VITE_GITHUB_TOKEN || env.GITHUB_TOKEN || env.VITE_GITHUB_TOKEN || '';
   const AI_BASE_URL = GROQ_KEY ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
   const AI_MODEL = GROQ_KEY ? (directEnv.VITE_GROQ_MODEL || env.VITE_GROQ_MODEL || 'llama-3.1-8b-instant') : 'gpt-4o-mini';
@@ -235,30 +234,47 @@ export default defineConfig(({ mode }) => {
 
             if (!AI_KEY) { sendJSON(res, 500, { error: 'AI key missing in .env.local' }); return; }
 
-            // Helper to call AI with optional OpenAI fallback for Rate Limits (429)
+            // Helper to call AI with optional secondary Groq fallback for Rate Limits (429)
             const callAIWithFallback = async (messages: any[], maxTokens: number, jsonMode = false) => {
               try {
                 // Try primary first
                 return await callOpenAI(AI_KEY, AI_BASE_URL, AI_MODEL, messages, maxTokens, jsonMode);
               } catch (err: any) {
-                // If primary is Groq and it failed with 429, optionally try OpenAI.
-                if (GROQ_KEY && OPENAI_KEY && ENABLE_OPENAI_FALLBACK && err.message.includes('429')) {
-                  console.warn('Groq Rate Limit hit. Falling back to OpenAI because ENABLE_OPENAI_FALLBACK=true...');
-                  return await callOpenAI(OPENAI_KEY, 'https://api.openai.com/v1/chat/completions', 'gpt-4o-mini', messages, maxTokens, jsonMode);
-                }
+                // If primary is Groq and it failed with 429...
                 if (GROQ_KEY && err.message.includes('429')) {
-                  throw new Error('Groq quota/rate limit reached. Wait for reset or upgrade your Groq billing tier. You can also lower prompt size and retry.');
+                  // Fallback: Secondary Groq Key
+                  if (GROQ_FALLBACK_KEY) {
+                    try {
+                      console.warn('Groq Rate Limit hit. Falling back to secondary Groq key...');
+                      return await callOpenAI(GROQ_FALLBACK_KEY, AI_BASE_URL, AI_MODEL, messages, maxTokens, jsonMode);
+                    } catch (fallbackErr: any) {
+                      if (fallbackErr.message.includes('429')) {
+                        console.warn('Secondary Groq key also hit Rate Limit.');
+                      } else {
+                        throw fallbackErr;
+                      }
+                    }
+                  }
+                  
+                  throw new Error('Groq quota/rate limit reached on all keys. Wait for reset or upgrade your Groq billing tier. You can also lower prompt size and retry.');
                 }
                 throw err;
               }
             };
 
-            try {
-              const body = await readBody(req);
-              if (isAnalyze) {
-                const code = body.code as string;
-                const prompt = `Review this code and return JSON: { "overallScore": 0-100, "language": "...", "issues": [{ "severity": "...", "category": "...", "message": "...", "line": 0, "code": "...", "suggestion": "...", "fixedCode": "..." }], "metrics": { "complexity": 0, "maintainability": 0, "readability": 0, "performance": 0, "security": 0, "documentation": 0 }, "recommendations": [], "technicalDebt": "...", "codeSmells": 0 }\n\nCode:\n${code}`;
-                const raw = await callAIWithFallback([{ role: 'user', content: prompt }], 1200, true);
+              const truncateCode = (c: string, maxLen = 12000) => {
+                if (c && c.length > maxLen) {
+                  return c.substring(0, maxLen) + '\n\n// [Code truncated due to AI token limits (6000 TPM limit). Please analyze smaller snippets.]';
+                }
+                return c;
+              };
+
+              try {
+                const body = await readBody(req);
+                if (isAnalyze) {
+                  const code = truncateCode(body.code as string);
+                  const prompt = `Review this code and return JSON: { "overallScore": 0-100, "language": "...", "issues": [{ "severity": "...", "category": "...", "message": "...", "line": 0, "code": "...", "suggestion": "...", "fixedCode": "..." }], "metrics": { "complexity": 0, "maintainability": 0, "readability": 0, "performance": 0, "security": 0, "documentation": 0 }, "recommendations": [], "technicalDebt": "...", "codeSmells": 0 }\n\nCode:\n${code}`;
+                  const raw = await callAIWithFallback([{ role: 'user', content: prompt }], 1200, true);
                 const d = parseJSON(raw) as any;
                 const analysis = {
                   language: d.language || 'unknown',
@@ -266,24 +282,26 @@ export default defineConfig(({ mode }) => {
                   issues: (d.issues || []).map((i: any, idx: number) => ({ id: `i${idx}`, ...i, confidence: 90 })),
                   metrics: { ...d.metrics, linesOfCode: code.split('\n').length },
                   summary: { totalIssues: (d.issues || []).length },
-                  recommendations: d.recommendations || [],
+                  recommendations: (d.recommendations || []).map((r: any) => typeof r === 'string' ? r : (r.title ? `${r.title}: ${r.description || ''}` : JSON.stringify(r))),
                   codeSmells: d.codeSmells || 0,
                   technicalDebt: d.technicalDebt || 'Low',
                   timestamp: new Date().toISOString()
                 };
                 sendJSON(res, 200, { success: true, analysis });
               } else if (isFix) {
-                const { code, issues, language } = body as any;
+                const { issues, language } = body as any;
+                const code = truncateCode(body.code as string);
                 const prompt = `Fix these issues in the ${language} code:\n${JSON.stringify(issues)}\n\nReturn ONLY the fixed code:\n${code}`;
                 const fixed = await callAIWithFallback([{ role: 'user', content: prompt }], 2200);
                 sendJSON(res, 200, { success: true, fixedCode: fixed.replace(/^```[a-z]*\n/i, '').replace(/\n```$/g, '').trim() });
               } else if (isExplain) {
-                const code = body.code as string;
+                const code = truncateCode(body.code as string);
                 const prompt = `Explain this code in JSON: { "language": "...", "purpose": "...", "overview": "...", "complexity": "Moderate", "sections": [{ "title": "...", "lines": "...", "explanation": "..." }], "inputs": [], "outputs": "...", "dependencies": [], "audience": "...", "keyPoints": [] }\n\nCode:\n${code}`;
                 const raw = await callAIWithFallback([{ role: 'user', content: prompt }], 1100, true);
                 sendJSON(res, 200, { success: true, explanation: parseJSON(raw) });
               } else if (isChat) {
-                const { code, history, userMessage, analysis } = body as any;
+                const { history, userMessage, analysis } = body as any;
+                const code = truncateCode(body.code as string);
                 
                 // Add line numbers to the code so the AI can answer "what does line X do?" accurately
                 const lines = (code || '').split('\n').map((l: string, i: number) => `${i + 1}: ${l}`).join('\n');

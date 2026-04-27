@@ -10,8 +10,9 @@ import ChatPanel from './ChatPanel';
 import { analyzeCodeWithAI, fixCodeWithAI, chatWithAI } from '../services/aiAnalysis';
 import type { ChatMessage } from '../services/aiAnalysis';
 
-interface HomePageProps { user: User; }
 
+
+/* ── SECTION: TYPES & INTERFACES ─────────────────── */
 interface Issue {
   id?: string;
   type: string;
@@ -92,7 +93,20 @@ function toUserFriendlyAIError(error: unknown): string {
   return message;
 }
 
+// Simple hash function for code fingerprinting (Table 5.8: codeHash)
+function generateCodeHash(code: string): string {
+  let hash = 0;
+  for (let i = 0; i < code.length; i++) {
+    const char = code.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16);
+}
+
+/* ── SECTION: MAIN COMPONENT ──────────────────────── */
 export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAnalysis, clearRestoredAnalysis }) => {
+  /* ── 1. Component States ──────────────────────── */
   const [code, setCode] = useState('');
   const [analysis, setAnalysis] = useState<AppAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -135,7 +149,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const viewModeRef = useRef(viewMode);
   const originalCodeRef = useRef(originalCode);
   const wasAutoFixedRef = useRef(wasAutoFixed);
-  
+
   useEffect(() => { codeRef.current = code; }, [code]);
   useEffect(() => { analysisRef.current = analysis; }, [analysis]);
   useEffect(() => { chatMessagesRef.current = chatMessages; }, [chatMessages]);
@@ -178,14 +192,43 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
   // Strip undefined values so Firestore doesn't reject the document
 
-  // Save an analysis to Firestore history — separate from AI call so errors don't hide each other
+  /* ── 2. Firebase Database Handlers ───────────────── */
+  // Save an analysis to Firestore history
   const saveToHistory = async (analysis: AppAnalysis, codeSnippet: string): Promise<string | null> => {
     try {
+      // 1. Create a CodeSubmission record first (Table 5.8/FK from Table 5.2)
+      const subRef = await addDoc(collection(db, 'codeSubmissions'), {
+        userId: user.uid,
+        codeContent: codeSnippet, // Table schema field
+        language: analysis.language,
+        inputMethod: inputMethod, // e.g. paste, upload, github
+        filename: inputMethod === 'upload' ? 'uploaded_file' : null,
+        codeHash: generateCodeHash(codeSnippet),
+        submittedAt: serverTimestamp(),
+      });
+
+      // 2. Extract errors and warnings based on severity
+      const errors = analysis.issues.filter(i => i.severity === 'critical' || i.severity === 'high');
+      const warnings = analysis.issues.filter(i => i.severity === 'medium' || i.severity === 'low');
+
+      // 3. Create the Analysis record
       const docRef = await addDoc(collection(db, 'analyses'), {
-        uid: user.uid,
+        submissionId: subRef.id, // FK
+        userId: user.uid, // FK
+        overallScore: analysis.overallScore,
+        errors: sanitize(errors),
+        warnings: sanitize(warnings),
+        recommendations: sanitize(analysis.recommendations),
+        autoFixes: null,
+        analysedAt: serverTimestamp(),
+        // Keep these for UI fallback during transition
         analysis: sanitize(analysis),
-        codeSnippet,
-        createdAt: Timestamp.fromDate(new Date()),
+        language: analysis.language,
+        metrics: sanitize(analysis.metrics),
+        technicalDebt: analysis.technicalDebt,
+        // Legacy fields for backward compatibility
+        uid: user.uid,
+        createdAt: serverTimestamp(),
       });
       setCurrentAnalysisId(docRef.id);
       return docRef.id;
@@ -195,7 +238,8 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     }
   };
 
-  // Prefer serverless analysis for accuracy; fallback to local analyzer
+  /* ── 3. AI Analysis & Logic ─────────────────────── */
+  // Prefer serverless analysis for accuracy
   const analyzeCode = async (codeContent: string) => {
     setIsAnalyzing(true);
     // Fresh manual analysis — reset auto-fix comparison state
@@ -220,7 +264,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       setAutoFixMessage(`Analysis failed: ${friendly}`);
       setTimeout(() => setAutoFixMessage(null), 7000);
       setAnalysis(null);
-      
+
       // Sync the error state to participants so they aren't stuck loading
       if (collabSessionId) {
         const sessionRef = doc(db, 'collabSessions', collabSessionId);
@@ -236,25 +280,36 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     if (!user?.uid) return;
     const q = query(
       collection(db, 'analyses'),
-      where('uid', '==', user.uid),
-      orderBy('createdAt', 'desc'),
+      where('userId', '==', user.uid),
+      orderBy('analysedAt', 'desc'),
       limit(10)
     );
     const unsub = onSnapshot(q, (snap) => {
       const items: AppAnalysis[] = [];
       snap.docs.forEach((d) => {
-        const data = d.data() as Record<string, unknown>;
-        // Backend saves analysis under 'analysis' field, not 'result'
+        const data = d.data() as any;
+        // Reconstruct AppAnalysis from flattened schema if needed, or use the legacy 'analysis' field
         if (data?.analysis) {
-          const baseAnalysis = data.analysis as AppAnalysis;
-          const codeSnippet = data.codeSnippet as string | undefined;
+          items.push({ ...data.analysis, codeSnippet: data.codeSnippet });
+        } else if (data?.errors) {
           items.push({
-            ...baseAnalysis,
-            codeSnippet,
-          });
+            language: data.language || 'unknown',
+            overallScore: data.overallScore || 0,
+            issues: [...(data.errors || []), ...(data.warnings || [])],
+            recommendations: data.recommendations || [],
+            summary: {
+              totalIssues: (data.errors?.length || 0) + (data.warnings?.length || 0),
+              criticalIssues: data.errors?.filter((i: any) => i.severity === 'critical').length || 0,
+              highIssues: data.errors?.filter((i: any) => i.severity === 'high').length || 0,
+              mediumIssues: data.warnings?.filter((i: any) => i.severity === 'medium').length || 0,
+              lowIssues: data.warnings?.filter((i: any) => i.severity === 'low').length || 0,
+            } as any,
+            metrics: data.metrics || {},
+            technicalDebt: data.technicalDebt || 'unknown',
+          } as any);
         }
       });
-      // Items parsed but unused here (can be lifted to parent if needed)
+      // setAnalysisHistory(items);
     });
     return () => unsub();
   }, [user?.uid]);
@@ -271,12 +326,16 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
   const handleRateIssue = async (issueIndex: number, rating: 1 | -1) => {
     try {
+      // Restructured to match Table 5.5: Feedback Collection
       await addDoc(collection(db, 'feedback'), {
-        uid: user.uid,
+        userId: user.uid,
         analysisId: currentAnalysisId,
+        issueId: analysis?.issues[issueIndex]?.id || null,
+        rating: rating, // metadata
+        createdAt: serverTimestamp(),
+        // Legacy fields
+        uid: user.uid,
         issueIndex,
-        rating,
-        feedbackCreatedAt: serverTimestamp(),
       });
     } catch (error) {
       console.error('Failed to rate issue:', error);
@@ -284,13 +343,34 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   };
 
 
+  /* ── 4. Chat & AI Assistant ──────────────────────── */
   const handleChat = async (userMessage: string) => {
     if (!userMessage.trim() || isChatting) return;
     const userMsg: ChatMessage = { role: 'user', content: userMessage };
     setChatMessages(prev => [...prev, userMsg]);
     setIsChatting(true);
+
     try {
+      // 1. Save user message to chat collection (Table 5.4)
+      await addDoc(collection(db, 'chat'), {
+        userId: user.uid,
+        sender: 'user',
+        content: userMessage,
+        endpoint: '/api/chat',
+        createdAt: serverTimestamp(),
+      });
+
       const reply = await chatWithAI(code, analysis as any, chatMessages, userMessage);
+
+      // 2. Save assistant reply to chat collection (Table 5.4)
+      await addDoc(collection(db, 'chat'), {
+        userId: user.uid,
+        sender: 'assistant',
+        content: reply,
+        endpoint: '/api/chat',
+        createdAt: serverTimestamp(),
+      });
+
       setChatMessages(prev => [...prev, { role: 'assistant', content: reply }]);
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -300,7 +380,8 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     }
   };
 
-  // Apply AI fix to the editor, then automatically re-analyze the fixed code
+  /* ── 5. Auto-Fix Feature ────────────────────────── */
+  // Apply AI fix to the editor
   const handleAutoFix = async () => {
     if (!analysis) { alert('Please analyze some code first.'); return; }
     if (!code.trim()) { alert('No code in the editor to fix.'); return; }
@@ -367,11 +448,17 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   const handleSaveSnippet = async () => {
     if (!code || !analysis) return;
     try {
+      // Bookmarks Collection
       await addDoc(collection(db, 'bookmarks'), {
+        userId: user.uid,
+        title: `${analysis.language} Snippet - ${new Date().toLocaleDateString()}`,
+        codeContent: code,
+        language: analysis.language,
+        createdAt: serverTimestamp(),
+        // Legacy fields for UI compatibility
         uid: user.uid,
         code,
         analysis,
-        createdAt: serverTimestamp(),
       });
       setAutoFixMessage('⭐ Snippet saved to your library!');
       setTimeout(() => setAutoFixMessage(null), 3000);
@@ -381,15 +468,38 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     }
   };
 
+  /* ── 6. Real-time Collaboration ──────────────────── */
   // Start a new collaborative session
   const handleStartCollabSession = async () => {
+    // 1. Create a CodeSubmission record for this session
+    let subId = '';
+    try {
+      const subRef = await addDoc(collection(db, 'codeSubmissions'), {
+        userId: user.uid,
+        codeContent: code,
+        language: analysis?.language || 'unknown',
+        inputMethod: inputMethod,
+        filename: null,
+        codeHash: generateCodeHash(code),
+        submittedAt: serverTimestamp(),
+      });
+      subId = subRef.id;
+    } catch (e) { console.warn('Failed to create submission for session', e); }
+
     const id = Math.random().toString(36).slice(2, 10);
     const sessionRef = doc(db, 'collabSessions', id);
     await setDoc(sessionRef, {
+      hostUserId: user.uid, // Table 5.3
+      submissionId: subId, // Table 5.3
+      participants: [user.uid], // Table 5.3
+      comments: [], // Table 5.3
+      status: 'active', // Table 5.3
+      createdAt: serverTimestamp(), // Table 5.3
+
+      // Legacy fields for UI/Logic sync
       code,
       analysis: sanitize(analysis),
       ownerUid: user.uid,
-      participants: [user.uid],
       inputMethod,
       isAnalyzing,
       isFixing,
@@ -400,10 +510,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
           role: 'host'
         }
       },
-      comments: [],
-      status: 'active',
       analysisId: currentAnalysisId,
-      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
     setCollabSessionId(id);
@@ -429,7 +536,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     if (!sessionId) return;
     setCollabConnected(false);
     setCollabSessionId(sessionId);
-    
+
     // Update participants info
     const sessionRef = doc(db, 'collabSessions', sessionId);
     updateDoc(sessionRef, {
@@ -451,13 +558,18 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
 
   const handleSaveReport = async (type: 'html' | 'email' | 'pdf' | 'csv', recipientEmail?: string, status: 'downloaded' | 'sent' | 'failed' = 'downloaded') => {
     try {
+      // Reports Collection
       await addDoc(collection(db, 'reports'), {
-        uid: user.uid,
+        userId: user.uid,
         analysisId: currentAnalysisId,
-        type,
-        recipientEmail: recipientEmail ?? null,
+        format: type,
+        emailSentTo: recipientEmail ?? null,
+        fileURL: null, // Populated if uploaded to storage
         status,
         createdAt: serverTimestamp(),
+        // Legacy fields
+        uid: user.uid,
+        type,
       });
     } catch (err) {
       console.error('Failed to save report record:', err);
@@ -500,7 +612,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
   useEffect(() => {
     if (!collabSessionId) return;
     const sessionRef = doc(db, 'collabSessions', collabSessionId);
-    
+
     const unsub = onSnapshot(sessionRef, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data() as Record<string, unknown>;
@@ -563,7 +675,9 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       if (Array.isArray(data.comments)) {
         setCollabComments(data.comments);
       }
-      if (typeof data.ownerUid === 'string') {
+      if (typeof data.hostUserId === 'string') {
+        setCollabOwnerUid(data.hostUserId);
+      } else if (typeof data.ownerUid === 'string') {
         setCollabOwnerUid(data.ownerUid);
       }
       if (data.participantsInfo) {
@@ -634,6 +748,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
     return () => clearTimeout(timeout);
   }, [code, originalCode, viewMode, wasAutoFixed, preFixScore, chatMessages, collabSessionId]);
 
+  /* ── SECTION: RENDER UI ─────────────────────────── */
   /* ── Render ─────────────────────────────────────── */
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#040d1a', color: '#f1f5f9' }}>
@@ -656,7 +771,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         </div>
       )}
 
-      {/* ── Header / Nav ─────────────────────────────── */}
+      {/* ── PART 1: TOP NAVIGATION ─────────────────── */}
       <header className="nav-bar sticky top-0 z-40 px-6 py-3 flex items-center justify-between gap-4">
         {/* Logo */}
         <div className="flex items-center gap-3 flex-shrink-0">
@@ -719,9 +834,10 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
       </header>
 
       {/* ── Main content ─────────────────────────────── */}
+      {/* ── PART 2: MAIN DASHBOARD ─────────────────── */}
       <main className="flex-1 flex flex-col md:flex-row gap-5 p-5 lg:p-6">
 
-        {/* ── Left: Code Editor panel ─────────────────── */}
+        {/* ── LEFT SIDE: CODE EDITOR PANEL ─────────── */}
         <section className="flex-1 glass rounded-2xl flex flex-col overflow-hidden"
           style={{ minHeight: 0, border: '1px solid rgba(255,255,255,0.07)' }}>
 
@@ -772,8 +888,8 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                       setTimeout(() => setLinkCopied(false), 2000);
                     }}
                     className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition-all duration-200"
-                    style={{ 
-                      background: linkCopied ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.05)', 
+                    style={{
+                      background: linkCopied ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.05)',
                       color: linkCopied ? '#4ade80' : '#94a3b8',
                       border: `1px solid ${linkCopied ? 'rgba(74,222,128,0.2)' : 'rgba(255,255,255,0.1)'}`
                     }}
@@ -782,12 +898,12 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
                     <Copy className="w-3 h-3" />
                     {linkCopied ? 'Copied Link!' : 'Invite'}
                   </button>
-                  
+
                   {/* Participant list */}
                   <div className="flex items-center -space-x-2 ml-2">
                     {participants.map((p) => (
-                      <div 
-                        key={p.uid} 
+                      <div
+                        key={p.uid}
                         className="w-6 h-6 rounded-full border-2 border-[#0f172a] overflow-hidden bg-slate-800 flex items-center justify-center relative group"
                         title={`${p.displayName} (${p.role})`}
                       >
@@ -924,16 +1040,16 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
               />
             </div>
             {viewMode === 'diff' && (
-              <DiffViewer 
-                original={originalCode || ''} 
-                modified={code} 
+              <DiffViewer
+                original={originalCode || ''}
+                modified={code}
                 onClose={() => setViewMode('editor')}
               />
             )}
           </div>
         </section>
 
-        {/* ── Right: Analysis panel (Always visible) ── */}
+        {/* ── RIGHT SIDE: ANALYSIS RESULTS PANEL ────── */}
         <section className="w-full md:w-[420px] lg:w-[460px] flex-shrink-0 flex flex-col gap-3">
           <ReviewPanel
             analysis={analysis}
@@ -959,6 +1075,7 @@ export const HomePage: React.FC<HomePageProps> = ({ user, onNavigate, restoredAn
         </section>
       </main>
 
+      {/* ── PART 3: AI CHAT WIDGET ─────────────────── */}
       {/* ── Floating Chat Widget ──────────────────────── */}
 
       {/* Chat panel */}

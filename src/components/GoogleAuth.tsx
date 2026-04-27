@@ -12,7 +12,9 @@ interface GoogleAuthProps {
   onAuthSuccess: (user: User) => void;
 }
 
+/* ── SECTION: MAIN COMPONENT ──────────────────────── */
 export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
+  /* ── 1. States & User Setup ──────────────────── */
   const currentUser = auth.currentUser;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -22,6 +24,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
   const [displayName, setDisplayName] = useState('');
   const [showPass, setShowPass] = useState(false);
 
+  /* ── 2. Google OAuth Logic ─────────────────────── */
   const handleGoogleSignIn = async () => {
     setError('');
     // Trigger popup IMMEDIATELY before any async state updates to prevent browser blocking
@@ -42,6 +45,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
     }
   };
 
+  /* ── 3. Email & Password Logic (Firebase) ──────── */
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError('');
     try {
@@ -58,6 +62,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
     } finally { setLoading(false); }
   };
 
+  /* ── SECTION: RENDER UI ─────────────────────────── */
   return (
     <div className="min-h-screen flex items-start justify-center relative overflow-x-hidden overflow-y-auto py-10"
       style={{ background: '#040d1a' }}>
@@ -89,6 +94,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
         {/* Card */}
         <div className="glass rounded-2xl p-8 space-y-5"
           style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
+          {/* ── AUTH CARD CONTAINER ───────────────── */}
 
           {/* Already signed in — continue option */}
           {currentUser && (
@@ -150,6 +156,7 @@ export const GoogleAuth: React.FC<GoogleAuthProps> = ({ onAuthSuccess }) => {
           )}
 
           {/* Form */}
+          {/* ── EMAIL FORM SECTION ────────────────── */}
           <form onSubmit={handleEmailSubmit} className="space-y-4">
             {mode === 'signup' && (
               <div className="relative">

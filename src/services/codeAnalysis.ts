@@ -507,26 +507,38 @@ export class AdvancedCodeAnalyzer {
 
   private generateRecommendations(issues: Issue[], code: string, language: string): string[] {
     const recommendations: string[] = [];
-    const criticalIssues = issues.filter(i => i.severity === 'critical').length;
-    const securityIssues = issues.filter(i => i.category === 'Security').length;
+    const criticalIssues = issues.filter(i => i.severity === 'critical');
+    const securityIssues = issues.filter(i => i.category === 'Security');
+    const performanceIssues = issues.filter(i => i.category === 'Performance');
     
-    if (criticalIssues > 0) {
-      recommendations.push(`Address ${criticalIssues} critical issues immediately`);
+    if (criticalIssues.length > 0) {
+      recommendations.push(`Urgent: Resolve the ${criticalIssues.length} critical flaws (e.g., ${criticalIssues[0].message.toLowerCase()}) to prevent system failure.`);
     }
     
-    if (securityIssues > 0) {
-      recommendations.push('Review all security vulnerabilities and implement fixes');
+    if (securityIssues.length > 0) {
+      recommendations.push(`Security: Patch detected vulnerabilities in your ${language} code, specifically targeting ${securityIssues[0].category.toLowerCase()} risks.`);
+    }
+
+    if (performanceIssues.length > 0) {
+      recommendations.push(`Performance: Optimize the logic on lines ${performanceIssues.map(p => p.line).slice(0, 2).join(', ')} to reduce resource consumption.`);
     }
     
-    recommendations.push('Add comprehensive unit tests to improve reliability');
-    recommendations.push('Consider implementing automated code quality checks');
-    recommendations.push('Document complex functions and algorithms');
-    
+    if (code.length > 2000) {
+      recommendations.push('Refactor: This file is becoming large. Consider breaking it down into smaller, modular components.');
+    }
+
     if (language === 'javascript' || language === 'typescript') {
-      recommendations.push('Consider migrating to TypeScript for better type safety');
+      if (!code.includes('import') && !code.includes('require')) {
+        recommendations.push('Architecture: Consider using ES Modules for better code organization and tree-shaking.');
+      }
     }
     
-    return recommendations.slice(0, 5); // Limit to top 5 recommendations
+    // Add a default if needed
+    if (recommendations.length < 3) {
+      recommendations.push('Stability: Implement comprehensive unit tests for the core logic to prevent regression bugs.');
+    }
+    
+    return recommendations.slice(0, 5);
   }
 
   private calculateCodeSmells(issues: Issue[], complexity: number): number {
